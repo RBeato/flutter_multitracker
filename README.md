@@ -2,6 +2,8 @@
 
 A Flutter plugin for music sequencing and sampler instrument playback on iOS and Android. This plugin provides a powerful API for creating multi-track music sequences with support for SFZ and SF2 sampler instruments, as well as AudioUnit instruments on iOS.
 
+Take inspiration from this project: https://github.com/mikeperri/flutter_sequencer
+
 ## Features
 
 - Load and play SFZ format sampler instruments using the sfizz library

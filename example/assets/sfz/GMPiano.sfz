@@ -1,0 +1,22 @@
+// General MIDI Piano SFZ definition
+// This is a simple mapping of samples to MIDI notes
+
+<global>
+ampeg_release=0.7
+
+<group>
+// Lower octave
+<region> sample=samples/Gb1.flac key=42 lokey=39 hikey=43
+<region> sample=samples/D1.flac key=38 lokey=35 hikey=38
+
+// Middle range
+<region> sample=samples/Ab2.flac key=56 lokey=52 hikey=57
+<region> sample=samples/Csharp2.flac key=49 lokey=44 hikey=51
+<region> sample=samples/Db3.flac key=61 lokey=58 hikey=62
+<region> sample=samples/Ab3.flac key=68 lokey=63 hikey=69
+
+// Higher octaves
+<region> sample=samples/Db4.flac key=73 lokey=70 hikey=74
+<region> sample=samples/C5.flac key=84 lokey=75 hikey=86
+<region> sample=samples/Gb5.flac key=90 lokey=87 hikey=92
+<region> sample=samples/C6.flac key=96 lokey=93 hikey=108
