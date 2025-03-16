@@ -54,6 +54,16 @@ public class AudioEngine {
     // Audio thread
     private Thread audioThread;
 
+    // Add a map to track note envelopes
+    private final Map<Integer, Map<Integer, NoteEnvelope>> noteEnvelopes = new HashMap<>();
+    
+    // Add a map to track note start times for accurate phase calculation
+    private final Map<Integer, Map<Integer, Long>> noteStartTimes = new HashMap<>();
+
+    // Add a map to store sample data
+    private final Map<Integer, Map<Integer, short[]>> instrumentSamples = new HashMap<>();
+    private final Map<Integer, Map<Integer, Integer>> sampleRates = new HashMap<>();
+
     /**
      * Initialize the audio engine with the specified sample rate.
      */
@@ -285,6 +295,23 @@ public class AudioEngine {
             synchronized (notePhases) {
                 notePhases.clear();
             }
+            
+            synchronized (noteEnvelopes) {
+                noteEnvelopes.clear();
+            }
+            
+            synchronized (noteStartTimes) {
+                noteStartTimes.clear();
+            }
+
+            // Clear sample data
+            synchronized (instrumentSamples) {
+                instrumentSamples.clear();
+            }
+            
+            synchronized (sampleRates) {
+                sampleRates.clear();
+            }
 
             isInitialized.set(false);
             Log.i(TAG, "AudioEngine cleaned up successfully");
@@ -426,6 +453,26 @@ public class AudioEngine {
                 }
                 notes.add(noteNumber);
             }
+            
+            // Create or reset envelope for this note
+            synchronized (noteEnvelopes) {
+                Map<Integer, NoteEnvelope> envelopes = noteEnvelopes.get(instrumentId);
+                if (envelopes == null) {
+                    envelopes = new HashMap<>();
+                    noteEnvelopes.put(instrumentId, envelopes);
+                }
+                envelopes.put(noteNumber, new NoteEnvelope());
+            }
+            
+            // Store note start time for accurate phase calculation
+            synchronized (noteStartTimes) {
+                Map<Integer, Long> startTimes = noteStartTimes.get(instrumentId);
+                if (startTimes == null) {
+                    startTimes = new HashMap<>();
+                    noteStartTimes.put(instrumentId, startTimes);
+                }
+                startTimes.put(noteNumber, System.currentTimeMillis());
+            }
 
             Log.i(TAG, "Added note " + noteNumber + " to active notes for instrument " + instrumentId + " with velocity " + clampedVelocity);
             return true;
@@ -455,32 +502,48 @@ public class AudioEngine {
                 return false;
             }
 
-            // Remove the note from active notes
-            synchronized (activeNotes) {
-                Set<Integer> notes = activeNotes.get(instrumentId);
-                if (notes != null && notes.contains(noteNumber)) {
-                    notes.remove(noteNumber);
-                    Log.i(TAG, "Removed note " + noteNumber + " from active notes for instrument " + instrumentId);
-
-                    // Clean up empty sets
-                    if (notes.isEmpty()) {
-                        activeNotes.remove(instrumentId);
-                        Log.d(TAG, "Removed empty note set for instrument " + instrumentId);
+            // Start release phase for this note's envelope
+            boolean noteWasActive = false;
+            synchronized (noteEnvelopes) {
+                Map<Integer, NoteEnvelope> envelopes = noteEnvelopes.get(instrumentId);
+                if (envelopes != null) {
+                    NoteEnvelope envelope = envelopes.get(noteNumber);
+                    if (envelope != null) {
+                        envelope.release();
+                        noteWasActive = true;
                     }
-                } else {
-                    Log.w(TAG, "Note " + noteNumber + " was not active for instrument " + instrumentId);
                 }
             }
+            
+            // For notes without envelopes or if we want immediate note-off
+            if (!noteWasActive) {
+                // Remove the note from active notes
+                synchronized (activeNotes) {
+                    Set<Integer> notes = activeNotes.get(instrumentId);
+                    if (notes != null && notes.contains(noteNumber)) {
+                        notes.remove(noteNumber);
+                        Log.i(TAG, "Removed note " + noteNumber + " from active notes for instrument " + instrumentId);
 
-            // Clean up velocity map
-            synchronized (noteVelocities) {
-                Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
-                if (velocities != null) {
-                    velocities.remove(noteNumber);
+                        // Clean up empty sets
+                        if (notes.isEmpty()) {
+                            activeNotes.remove(instrumentId);
+                            Log.d(TAG, "Removed empty note set for instrument " + instrumentId);
+                        }
+                    } else {
+                        Log.w(TAG, "Note " + noteNumber + " was not active for instrument " + instrumentId);
+                    }
+                }
 
-                    // Clean up empty maps
-                    if (velocities.isEmpty()) {
-                        noteVelocities.remove(instrumentId);
+                // Clean up velocity map
+                synchronized (noteVelocities) {
+                    Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
+                    if (velocities != null) {
+                        velocities.remove(noteNumber);
+
+                        // Clean up empty maps
+                        if (velocities.isEmpty()) {
+                            noteVelocities.remove(instrumentId);
+                        }
                     }
                 }
             }
@@ -591,84 +654,98 @@ public class AudioEngine {
                         continue;
                     }
 
-                    hasActiveNotes = true;
-
                     // Get the instrument
                     Instrument instrument = getInstrument(instrumentId);
                     if (instrument == null) {
                         continue;
                     }
 
-                    // Calculate base amplitude - reduce as more notes are active
-                    float baseAmplitude = 0.15f / (float)Math.sqrt(notes.size());
-
-                    // Apply instrument volume
-                    float instrumentAmplitude = baseAmplitude * instrument.getVolume();
-
-                    // Generate sine waves for each note
+                    // Generate audio for each note
                     List<Integer> activeNotesList = new ArrayList<>(notes);
+                    List<Integer> notesToRemove = new ArrayList<>();
                     
                     for (int note : activeNotesList) {
-                        // Calculate frequency based on MIDI note number
-                        double frequency = midiNoteToFrequency(note);
-
-                        // Get or initialize phase for this note
-                        float phase = 0.0f;
-                        synchronized (notePhases) {
-                            Map<Integer, Float> phases = notePhases.get(instrumentId);
-                            if (phases == null) {
-                                phases = new HashMap<>();
-                                notePhases.put(instrumentId, phases);
-                            }
-                            
-                            Float currentPhase = phases.get(note);
-                            if (currentPhase == null) {
-                                phases.put(note, 0.0f);
-                            } else {
-                                phase = currentPhase;
+                        // Get envelope for this note
+                        NoteEnvelope envelope = null;
+                        synchronized (noteEnvelopes) {
+                            Map<Integer, NoteEnvelope> envelopes = noteEnvelopes.get(instrumentId);
+                            if (envelopes != null) {
+                                envelope = envelopes.get(note);
                             }
                         }
-
-                        // Apply velocity scaling if available
-                        float amplitude = instrumentAmplitude;
-                        synchronized (noteVelocities) {
-                            Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
-                            if (velocities != null && velocities.containsKey(note)) {
-                                Integer velocity = velocities.get(note);
-                                if (velocity != null) {
-                                    amplitude *= velocity / 127.0f;
-                                } else {
-                                    // Default velocity if not specified
-                                    amplitude *= 100 / 127.0f;
+                        
+                        // Skip notes with completed envelopes
+                        if (envelope != null && !envelope.isActive()) {
+                            notesToRemove.add(note);
+                            continue;
+                        }
+                        
+                        hasActiveNotes = true;
+                        
+                        // Check if we have a sample for this note
+                        boolean hasSample = false;
+                        synchronized (instrumentSamples) {
+                            Map<Integer, short[]> samples = instrumentSamples.get(instrumentId);
+                            if (samples != null && samples.containsKey(note)) {
+                                hasSample = true;
+                            }
+                        }
+                        
+                        if (hasSample && (instrument.getType() == InstrumentType.SAMPLE_BASED || 
+                                         instrument.getType() == InstrumentType.SF2_BASED || 
+                                         instrument.getType() == InstrumentType.SFZ_BASED)) {
+                            // Render sample-based audio
+                            renderSampleAudio(instrumentId, note, envelope, instrument);
+                        } else {
+                            // Render sine wave as fallback
+                            renderSineWaveAudio(instrumentId, note, envelope, instrument);
+                        }
+                    }
+                    
+                    // Clean up notes with completed envelopes
+                    if (!notesToRemove.isEmpty()) {
+                        synchronized (activeNotes) {
+                            Set<Integer> currentNotes = activeNotes.get(instrumentId);
+                            if (currentNotes != null) {
+                                for (int noteToRemove : notesToRemove) {
+                                    currentNotes.remove(noteToRemove);
+                                    Log.d(TAG, "Removed completed note " + noteToRemove + " from instrument " + instrumentId);
+                                    
+                                    // Clean up related data
+                                    synchronized (noteVelocities) {
+                                        Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
+                                        if (velocities != null) {
+                                            velocities.remove(noteToRemove);
+                                        }
+                                    }
+                                    
+                                    synchronized (notePhases) {
+                                        Map<Integer, Float> phases = notePhases.get(instrumentId);
+                                        if (phases != null) {
+                                            phases.remove(noteToRemove);
+                                        }
+                                    }
+                                    
+                                    synchronized (noteEnvelopes) {
+                                        Map<Integer, NoteEnvelope> envelopes = noteEnvelopes.get(instrumentId);
+                                        if (envelopes != null) {
+                                            envelopes.remove(noteToRemove);
+                                        }
+                                    }
+                                    
+                                    synchronized (noteStartTimes) {
+                                        Map<Integer, Long> startTimes = noteStartTimes.get(instrumentId);
+                                        if (startTimes != null) {
+                                            startTimes.remove(noteToRemove);
+                                        }
+                                    }
                                 }
-                            } else {
-                                // Default velocity if not specified
-                                amplitude *= 100 / 127.0f;
-                            }
-                        }
-
-                        // Apply master volume
-                        amplitude *= masterVolume;
-
-                        // Generate sine wave for this note
-                        for (int i = 0; i < framesPerBuffer; i++) {
-                            double sample = amplitude * Math.sin(phase + i * 2.0 * Math.PI * frequency / sampleRate);
-
-                            // Mix into output buffer (stereo)
-                            floatBuffer[i * 2] += (float)sample;     // Left channel
-                            floatBuffer[i * 2 + 1] += (float)sample; // Right channel
-                        }
-
-                        // Update phase
-                        synchronized (notePhases) {
-                            Map<Integer, Float> phases = notePhases.get(instrumentId);
-                            if (phases != null) {
-                                double newPhase = phase + framesPerBuffer * 2.0 * Math.PI * frequency / sampleRate;
-                                // Keep phase in the range [0, 2π]
-                                while (newPhase >= 2.0 * Math.PI) {
-                                    newPhase -= 2.0 * Math.PI;
+                                
+                                // Clean up empty sets
+                                if (currentNotes.isEmpty()) {
+                                    activeNotes.remove(instrumentId);
+                                    Log.d(TAG, "Removed empty note set for instrument " + instrumentId);
                                 }
-                                phases.put(note, (float)newPhase);
                             }
                         }
                     }
@@ -718,6 +795,9 @@ public class AudioEngine {
      */
     public enum InstrumentType {
         SINE_WAVE,
+        SAMPLE_BASED,
+        SF2_BASED,
+        SFZ_BASED,
         UNKNOWN
     }
 
@@ -729,6 +809,10 @@ public class AudioEngine {
         private final String name;
         private final InstrumentType type;
         private float volume;
+        private float attack = 0.01f;  // Attack time in seconds
+        private float decay = 0.05f;   // Decay time in seconds
+        private float sustain = 0.7f;  // Sustain level (0.0 to 1.0)
+        private float release = 0.3f;  // Release time in seconds
 
         public Instrument(int id, String name, InstrumentType type, float volume) {
             this.id = id;
@@ -755,6 +839,657 @@ public class AudioEngine {
 
         public void setVolume(float volume) {
             this.volume = volume;
+        }
+        
+        public float getAttack() {
+            return attack;
+        }
+        
+        public void setAttack(float attack) {
+            this.attack = Math.max(0.001f, attack);
+        }
+        
+        public float getDecay() {
+            return decay;
+        }
+        
+        public void setDecay(float decay) {
+            this.decay = Math.max(0.001f, decay);
+        }
+        
+        public float getSustain() {
+            return sustain;
+        }
+        
+        public void setSustain(float sustain) {
+            this.sustain = Math.max(0.0f, Math.min(1.0f, sustain));
+        }
+        
+        public float getRelease() {
+            return release;
+        }
+        
+        public void setRelease(float release) {
+            this.release = Math.max(0.001f, release);
+        }
+    }
+    
+    /**
+     * Note envelope data class to track the state of each note's envelope.
+     */
+    private static class NoteEnvelope {
+        private static final int STATE_ATTACK = 0;
+        private static final int STATE_DECAY = 1;
+        private static final int STATE_SUSTAIN = 2;
+        private static final int STATE_RELEASE = 3;
+        private static final int STATE_OFF = 4;
+        
+        private int state = STATE_ATTACK;
+        private float value = 0.0f;
+        private float releaseStartValue = 0.0f;
+        private long startTimeMs = 0;
+        private long releaseStartTimeMs = 0;
+        
+        public NoteEnvelope() {
+            startTimeMs = System.currentTimeMillis();
+        }
+        
+        public void release() {
+            if (state != STATE_OFF) {
+                state = STATE_RELEASE;
+                releaseStartValue = value;
+                releaseStartTimeMs = System.currentTimeMillis();
+            }
+        }
+        
+        public float getValue(Instrument instrument) {
+            long currentTimeMs = System.currentTimeMillis();
+            float elapsedSec = (currentTimeMs - startTimeMs) / 1000.0f;
+            
+            switch (state) {
+                case STATE_ATTACK:
+                    if (instrument.getAttack() <= 0) {
+                        value = 1.0f;
+                        state = STATE_DECAY;
+                    } else {
+                        value = Math.min(1.0f, elapsedSec / instrument.getAttack());
+                        if (value >= 1.0f) {
+                            state = STATE_DECAY;
+                        }
+                    }
+                    break;
+                    
+                case STATE_DECAY:
+                    float decayElapsed = elapsedSec - instrument.getAttack();
+                    if (instrument.getDecay() <= 0) {
+                        value = instrument.getSustain();
+                        state = STATE_SUSTAIN;
+                    } else {
+                        float decayProgress = Math.min(1.0f, decayElapsed / instrument.getDecay());
+                        value = 1.0f - (decayProgress * (1.0f - instrument.getSustain()));
+                        if (decayProgress >= 1.0f) {
+                            state = STATE_SUSTAIN;
+                        }
+                    }
+                    break;
+                    
+                case STATE_SUSTAIN:
+                    value = instrument.getSustain();
+                    break;
+                    
+                case STATE_RELEASE:
+                    float releaseElapsedSec = (currentTimeMs - releaseStartTimeMs) / 1000.0f;
+                    if (instrument.getRelease() <= 0) {
+                        value = 0.0f;
+                        state = STATE_OFF;
+                    } else {
+                        float releaseProgress = Math.min(1.0f, releaseElapsedSec / instrument.getRelease());
+                        value = releaseStartValue * (1.0f - releaseProgress);
+                        if (releaseProgress >= 1.0f) {
+                            value = 0.0f;
+                            state = STATE_OFF;
+                        }
+                    }
+                    break;
+                    
+                case STATE_OFF:
+                    value = 0.0f;
+                    break;
+            }
+            
+            return value;
+        }
+        
+        public boolean isActive() {
+            return state != STATE_OFF;
+        }
+    }
+
+    /**
+     * Set ADSR envelope parameters for an instrument.
+     */
+    public boolean setInstrumentEnvelope(int instrumentId, float attack, float decay, float sustain, float release) {
+        Log.d(TAG, "Setting envelope for instrument " + instrumentId + 
+              ": A=" + attack + ", D=" + decay + ", S=" + sustain + ", R=" + release);
+
+        if (!isInitialized.get()) {
+            Log.e(TAG, "AudioEngine not initialized");
+            return false;
+        }
+
+        synchronized (instruments) {
+            Instrument instrument = instruments.get(instrumentId);
+            if (instrument == null) {
+                Log.w(TAG, "Instrument with ID " + instrumentId + " not found for envelope setting");
+                return false;
+            }
+
+            // Set envelope parameters with validation
+            instrument.setAttack(Math.max(0.001f, attack));
+            instrument.setDecay(Math.max(0.001f, decay));
+            instrument.setSustain(Math.max(0.0f, Math.min(1.0f, sustain)));
+            instrument.setRelease(Math.max(0.001f, release));
+            
+            Log.d(TAG, "Envelope changed for instrument " + instrumentId);
+            return true;
+        }
+    }
+
+    /**
+     * Create an instrument with the specified parameters.
+     */
+    public boolean createInstrument(int instrumentId, String name, String type, float volume) {
+        Log.i(TAG, "Creating instrument: " + name + ", type: " + type + ", id: " + instrumentId);
+
+        if (!isInitialized.get()) {
+            Log.e(TAG, "AudioEngine not initialized");
+            return false;
+        }
+
+        try {
+            synchronized (instruments) {
+                // Check if instrument with this ID already exists
+                if (instruments.containsKey(instrumentId)) {
+                    Log.w(TAG, "Instrument with ID " + instrumentId + " already exists");
+                    return false;
+                }
+
+                // Determine instrument type
+                InstrumentType instrumentType = InstrumentType.UNKNOWN;
+                if (type.equalsIgnoreCase("sine") || type.equalsIgnoreCase("sine_wave")) {
+                    instrumentType = InstrumentType.SINE_WAVE;
+                }
+
+                // Create instrument
+                Instrument instrument = new Instrument(
+                        instrumentId,
+                        name,
+                        instrumentType,
+                        volume
+                );
+
+                instruments.put(instrumentId, instrument);
+                Log.i(TAG, "Successfully created instrument '" + name + "' with ID: " + instrumentId);
+                return true;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Exception in createInstrument: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    /**
+     * Get the next available instrument ID.
+     */
+    public synchronized int getNextInstrumentId() {
+        int id = nextInstrumentId++;
+        Log.d(TAG, "Generated new instrument ID: " + id);
+        return id;
+    }
+
+    /**
+     * Load a sample for an instrument at a specific note.
+     */
+    public boolean loadSample(int instrumentId, int noteNumber, String samplePath, int sampleRate) {
+        Log.i(TAG, "Loading sample for instrument " + instrumentId + ", note " + noteNumber + ": " + samplePath);
+        
+        if (!isInitialized.get()) {
+            Log.e(TAG, "AudioEngine not initialized");
+            return false;
+        }
+        
+        synchronized (instruments) {
+            Instrument instrument = instruments.get(instrumentId);
+            if (instrument == null) {
+                Log.e(TAG, "Instrument with ID " + instrumentId + " not found");
+                return false;
+            }
+            
+            // Update instrument type if needed
+            if (instrument.getType() != InstrumentType.SAMPLE_BASED && 
+                instrument.getType() != InstrumentType.SF2_BASED && 
+                instrument.getType() != InstrumentType.SFZ_BASED) {
+                // This is a hack - we should create a proper subclass for sample instruments
+                Log.i(TAG, "Converting instrument " + instrumentId + " to sample-based");
+                Instrument newInstrument = new Instrument(
+                    instrument.getId(),
+                    instrument.getName(),
+                    InstrumentType.SAMPLE_BASED,
+                    instrument.getVolume()
+                );
+                newInstrument.setAttack(instrument.getAttack());
+                newInstrument.setDecay(instrument.getDecay());
+                newInstrument.setSustain(instrument.getSustain());
+                newInstrument.setRelease(instrument.getRelease());
+                instruments.put(instrumentId, newInstrument);
+                instrument = newInstrument;
+            }
+        }
+        
+        try {
+            // Load the sample file
+            java.io.File file = new java.io.File(samplePath);
+            if (!file.exists()) {
+                Log.e(TAG, "Sample file not found: " + samplePath);
+                return false;
+            }
+            
+            // Read the WAV file
+            short[] sampleData = loadWavFile(file);
+            if (sampleData == null) {
+                Log.e(TAG, "Failed to load WAV file: " + samplePath);
+                return false;
+            }
+            
+            // Store the sample data
+            synchronized (instrumentSamples) {
+                Map<Integer, short[]> samples = instrumentSamples.get(instrumentId);
+                if (samples == null) {
+                    samples = new HashMap<>();
+                    instrumentSamples.put(instrumentId, samples);
+                }
+                samples.put(noteNumber, sampleData);
+            }
+            
+            // Store the sample rate
+            synchronized (sampleRates) {
+                Map<Integer, Integer> rates = sampleRates.get(instrumentId);
+                if (rates == null) {
+                    rates = new HashMap<>();
+                    sampleRates.put(instrumentId, rates);
+                }
+                rates.put(noteNumber, sampleRate);
+            }
+            
+            Log.i(TAG, "Successfully loaded sample for instrument " + instrumentId + ", note " + noteNumber);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Exception loading sample: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    /**
+     * Load a WAV file and return the sample data.
+     */
+    private short[] loadWavFile(java.io.File file) {
+        try {
+            java.io.FileInputStream fis = new java.io.FileInputStream(file);
+            java.io.BufferedInputStream bis = new java.io.BufferedInputStream(fis);
+            
+            // Read WAV header
+            byte[] header = new byte[44]; // Standard WAV header size
+            bis.read(header, 0, header.length);
+            
+            // Verify it's a WAV file (RIFF header)
+            if (header[0] != 'R' || header[1] != 'I' || header[2] != 'F' || header[3] != 'F') {
+                Log.e(TAG, "Not a valid WAV file (missing RIFF header)");
+                bis.close();
+                return null;
+            }
+            
+            // Check format (should be WAVE)
+            if (header[8] != 'W' || header[9] != 'A' || header[10] != 'V' || header[11] != 'E') {
+                Log.e(TAG, "Not a valid WAV file (missing WAVE format)");
+                bis.close();
+                return null;
+            }
+            
+            // Check for PCM format (should be 1)
+            int format = (header[21] << 8) | (header[20] & 0xFF);
+            if (format != 1) {
+                Log.e(TAG, "Unsupported WAV format (not PCM): " + format);
+                bis.close();
+                return null;
+            }
+            
+            // Get number of channels
+            int channels = (header[23] << 8) | (header[22] & 0xFF);
+            
+            // Get sample rate
+            int sampleRate = ((header[27] & 0xFF) << 24) | ((header[26] & 0xFF) << 16) | 
+                             ((header[25] & 0xFF) << 8) | (header[24] & 0xFF);
+            
+            // Get bits per sample
+            int bitsPerSample = (header[35] << 8) | (header[34] & 0xFF);
+            
+            // Find data chunk
+            int dataSize = 0;
+            byte[] chunkHeader = new byte[8];
+            while (true) {
+                int bytesRead = bis.read(chunkHeader, 0, chunkHeader.length);
+                if (bytesRead < chunkHeader.length) {
+                    Log.e(TAG, "Unexpected end of file while searching for data chunk");
+                    bis.close();
+                    return null;
+                }
+                
+                // Check if this is the data chunk
+                if (chunkHeader[0] == 'd' && chunkHeader[1] == 'a' && chunkHeader[2] == 't' && chunkHeader[3] == 'a') {
+                    dataSize = ((chunkHeader[7] & 0xFF) << 24) | ((chunkHeader[6] & 0xFF) << 16) | 
+                               ((chunkHeader[5] & 0xFF) << 8) | (chunkHeader[4] & 0xFF);
+                    break;
+                }
+                
+                // Skip this chunk
+                int chunkSize = ((chunkHeader[7] & 0xFF) << 24) | ((chunkHeader[6] & 0xFF) << 16) | 
+                                ((chunkHeader[5] & 0xFF) << 8) | (chunkHeader[4] & 0xFF);
+                bis.skip(chunkSize);
+            }
+            
+            // Calculate number of samples
+            int bytesPerSample = bitsPerSample / 8;
+            int numSamples = dataSize / bytesPerSample;
+            
+            // Read sample data
+            short[] sampleData;
+            if (channels == 1) {
+                // Mono
+                sampleData = new short[numSamples];
+                
+                if (bitsPerSample == 16) {
+                    // 16-bit samples
+                    byte[] buffer = new byte[dataSize];
+                    bis.read(buffer, 0, buffer.length);
+                    
+                    for (int i = 0; i < numSamples; i++) {
+                        // Convert bytes to short (little endian)
+                        sampleData[i] = (short)(((buffer[i * 2 + 1] & 0xFF) << 8) | (buffer[i * 2] & 0xFF));
+                    }
+                } else if (bitsPerSample == 8) {
+                    // 8-bit samples
+                    byte[] buffer = new byte[dataSize];
+                    bis.read(buffer, 0, buffer.length);
+                    
+                    for (int i = 0; i < numSamples; i++) {
+                        // Convert 8-bit unsigned to 16-bit signed
+                        sampleData[i] = (short)(((buffer[i] & 0xFF) - 128) * 256);
+                    }
+                } else {
+                    Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
+                    bis.close();
+                    return null;
+                }
+            } else if (channels == 2) {
+                // Stereo - we'll convert to mono by averaging channels
+                int numMonoSamples = numSamples / 2;
+                sampleData = new short[numMonoSamples];
+                
+                if (bitsPerSample == 16) {
+                    // 16-bit samples
+                    byte[] buffer = new byte[dataSize];
+                    bis.read(buffer, 0, buffer.length);
+                    
+                    for (int i = 0; i < numMonoSamples; i++) {
+                        // Convert bytes to short (little endian)
+                        short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
+                        short right = (short)(((buffer[i * 4 + 3] & 0xFF) << 8) | (buffer[i * 4 + 2] & 0xFF));
+                        
+                        // Average the channels
+                        sampleData[i] = (short)((left + right) / 2);
+                    }
+                } else if (bitsPerSample == 8) {
+                    // 8-bit samples
+                    byte[] buffer = new byte[dataSize];
+                    bis.read(buffer, 0, buffer.length);
+                    
+                    for (int i = 0; i < numMonoSamples; i++) {
+                        // Convert 8-bit unsigned to 16-bit signed and average channels
+                        short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
+                        short right = (short)(((buffer[i * 2 + 1] & 0xFF) - 128) * 256);
+                        
+                        // Average the channels
+                        sampleData[i] = (short)((left + right) / 2);
+                    }
+                } else {
+                    Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
+                    bis.close();
+                    return null;
+                }
+            } else {
+                Log.e(TAG, "Unsupported number of channels: " + channels);
+                bis.close();
+                return null;
+            }
+            
+            bis.close();
+            Log.i(TAG, "Successfully loaded WAV file: " + file.getName() + 
+                  " (channels: " + channels + ", sample rate: " + sampleRate + 
+                  ", bits: " + bitsPerSample + ", samples: " + sampleData.length + ")");
+            
+            return sampleData;
+        } catch (Exception e) {
+            Log.e(TAG, "Exception loading WAV file: " + e.getMessage());
+            e.printStackTrace();
+            return null;
+        }
+    }
+    
+    /**
+     * Render audio for a sample-based note.
+     */
+    private void renderSampleAudio(int instrumentId, int note, NoteEnvelope envelope, Instrument instrument) {
+        // Get sample data
+        short[] sampleData = null;
+        synchronized (instrumentSamples) {
+            Map<Integer, short[]> samples = instrumentSamples.get(instrumentId);
+            if (samples != null) {
+                sampleData = samples.get(note);
+            }
+        }
+        
+        if (sampleData == null) {
+            // Fallback to sine wave if no sample data
+            renderSineWaveAudio(instrumentId, note, envelope, instrument);
+            return;
+        }
+        
+        // Get sample playback position
+        long noteStartTime = 0;
+        synchronized (noteStartTimes) {
+            Map<Integer, Long> startTimes = noteStartTimes.get(instrumentId);
+            if (startTimes != null) {
+                Long startTime = startTimes.get(note);
+                if (startTime != null) {
+                    noteStartTime = startTime;
+                }
+            }
+        }
+        
+        // Get sample rate
+        int sampleRate = this.sampleRate;
+        synchronized (sampleRates) {
+            Map<Integer, Integer> rates = sampleRates.get(instrumentId);
+            if (rates != null) {
+                Integer rate = rates.get(note);
+                if (rate != null) {
+                    sampleRate = rate;
+                }
+            }
+        }
+        
+        // Calculate base amplitude - reduce as more notes are active
+        float baseAmplitude = 0.15f;
+        
+        // Apply instrument volume
+        float instrumentAmplitude = baseAmplitude * instrument.getVolume();
+        
+        // Apply velocity scaling if available
+        float amplitude = instrumentAmplitude;
+        synchronized (noteVelocities) {
+            Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
+            if (velocities != null && velocities.containsKey(note)) {
+                Integer velocity = velocities.get(note);
+                if (velocity != null) {
+                    amplitude *= velocity / 127.0f;
+                } else {
+                    // Default velocity if not specified
+                    amplitude *= 100 / 127.0f;
+                }
+            } else {
+                // Default velocity if not specified
+                amplitude *= 100 / 127.0f;
+            }
+        }
+        
+        // Apply envelope if available
+        if (envelope != null) {
+            amplitude *= envelope.getValue(instrument);
+        }
+        
+        // Apply master volume
+        amplitude *= masterVolume;
+        
+        // Calculate elapsed time and sample position
+        long elapsedMs = System.currentTimeMillis() - noteStartTime;
+        double elapsedSec = elapsedMs / 1000.0;
+        
+        // Calculate sample position
+        double samplePos = elapsedSec * sampleRate;
+        int samplePosInt = (int)samplePos;
+        
+        // Check if we've reached the end of the sample
+        if (samplePosInt >= sampleData.length) {
+            // Loop or stop
+            if (envelope != null && envelope.isActive()) {
+                // Loop the sample
+                samplePosInt = samplePosInt % sampleData.length;
+            } else {
+                // End of sample and envelope is done
+                return;
+            }
+        }
+        
+        // Calculate sample rate conversion ratio
+        double sampleRateRatio = (double)sampleRate / this.sampleRate;
+        
+        // Render the sample
+        for (int i = 0; i < framesPerBuffer; i++) {
+            // Calculate sample index with rate conversion
+            int sampleIndex = samplePosInt + (int)(i * sampleRateRatio);
+            
+            // Check bounds
+            if (sampleIndex >= sampleData.length) {
+                // Loop or stop
+                if (envelope != null && envelope.isActive()) {
+                    // Loop the sample
+                    sampleIndex = sampleIndex % sampleData.length;
+                } else {
+                    // End of sample
+                    break;
+                }
+            }
+            
+            // Get sample value and normalize to -1.0 to 1.0
+            float sampleValue = sampleData[sampleIndex] / 32768.0f;
+            
+            // Apply amplitude
+            sampleValue *= amplitude;
+            
+            // Mix into output buffer (stereo)
+            floatBuffer[i * 2] += sampleValue;     // Left channel
+            floatBuffer[i * 2 + 1] += sampleValue; // Right channel
+        }
+    }
+    
+    /**
+     * Render audio for a sine wave note.
+     */
+    private void renderSineWaveAudio(int instrumentId, int note, NoteEnvelope envelope, Instrument instrument) {
+        // Calculate frequency based on MIDI note number
+        double frequency = midiNoteToFrequency(note);
+        
+        // Get or initialize phase for this note
+        float phase = 0.0f;
+        synchronized (notePhases) {
+            Map<Integer, Float> phases = notePhases.get(instrumentId);
+            if (phases == null) {
+                phases = new HashMap<>();
+                notePhases.put(instrumentId, phases);
+            }
+            
+            Float currentPhase = phases.get(note);
+            if (currentPhase == null) {
+                phases.put(note, 0.0f);
+            } else {
+                phase = currentPhase;
+            }
+        }
+        
+        // Calculate base amplitude - reduce as more notes are active
+        float baseAmplitude = 0.15f;
+        
+        // Apply instrument volume
+        float instrumentAmplitude = baseAmplitude * instrument.getVolume();
+        
+        // Apply velocity scaling if available
+        float amplitude = instrumentAmplitude;
+        synchronized (noteVelocities) {
+            Map<Integer, Integer> velocities = noteVelocities.get(instrumentId);
+            if (velocities != null && velocities.containsKey(note)) {
+                Integer velocity = velocities.get(note);
+                if (velocity != null) {
+                    amplitude *= velocity / 127.0f;
+                } else {
+                    // Default velocity if not specified
+                    amplitude *= 100 / 127.0f;
+                }
+            } else {
+                // Default velocity if not specified
+                amplitude *= 100 / 127.0f;
+            }
+        }
+        
+        // Apply envelope if available
+        if (envelope != null) {
+            amplitude *= envelope.getValue(instrument);
+        }
+        
+        // Apply master volume
+        amplitude *= masterVolume;
+        
+        // Generate sine wave for this note
+        for (int i = 0; i < framesPerBuffer; i++) {
+            double sample = amplitude * Math.sin(phase + i * 2.0 * Math.PI * frequency / sampleRate);
+            
+            // Mix into output buffer (stereo)
+            floatBuffer[i * 2] += (float)sample;     // Left channel
+            floatBuffer[i * 2 + 1] += (float)sample; // Right channel
+        }
+        
+        // Update phase
+        synchronized (notePhases) {
+            Map<Integer, Float> phases = notePhases.get(instrumentId);
+            if (phases != null) {
+                double newPhase = phase + framesPerBuffer * 2.0 * Math.PI * frequency / sampleRate;
+                // Keep phase in the range [0, 2π]
+                while (newPhase >= 2.0 * Math.PI) {
+                    newPhase -= 2.0 * Math.PI;
+                }
+                phases.put(note, (float)newPhase);
+            }
         }
     }
 } 

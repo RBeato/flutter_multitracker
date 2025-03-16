@@ -1,24 +1,25 @@
 name: flutter_multitracker
-description: A multi-track sequencer and sampler plugin for Flutter supporting SFZ, SF2, and AudioUnit instruments.
-version: 0.0.1
+description: A Flutter plugin for music sequencing and sampler instrument playback.
+version: 0.0.9
 homepage: https://github.com/yourusername/flutter_multitracker
 repository: https://github.com/yourusername/flutter_multitracker
 issue_tracker: https://github.com/yourusername/flutter_multitracker/issues
 
 environment:
-  sdk: '>=3.0.5 <4.0.0'
-  flutter: ">=3.3.0"
+  sdk: ^3.7.0
+  flutter: ">=3.7.0"
 
 dependencies:
   flutter:
     sdk: flutter
   path_provider: ^2.1.1
   path: ^1.8.3
+  plugin_platform_interface: ^2.1.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
+  flutter_lints: ^5.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
