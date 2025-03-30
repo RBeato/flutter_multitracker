@@ -1,0 +1,51 @@
+# Project Intelligence: flutter_multitracker
+
+## Code Structure Patterns
+
+- Flutter plugin with native components for Android and iOS
+- Models in lib/models/ directory follow a consistent pattern
+- Method channel implementation in flutter_multitracker_method_channel.dart
+- Platform interface defined in flutter_multitracker_platform_interface.dart
+- Main API exposed through flutter_multitracker.dart
+
+## Native Implementation Patterns
+
+- Android implementation will use Kotlin with JNI bridges to sfizz
+- iOS implementation will use Swift with Objective-C bridges to sfizz
+- Both platforms will need audio thread management for real-time processing
+- Audio resources should be properly released when not in use
+
+## API Design Patterns
+
+- Methods should be asynchronous (Future-based) when involving platform channel
+- Class names should be clear and consistent
+- Method parameters should have appropriate types and default values
+- Error handling should be consistent across all methods
+
+## Testing Patterns
+
+- Unit tests should focus on Dart model logic
+- Integration tests should verify cross-platform behavior
+- Manual testing should include various audio scenarios
+
+## User Preferences
+
+- Clear, modern API design
+- Comprehensive documentation
+- Efficient memory usage
+- Low-latency audio processing
+- Cross-platform consistency
+
+## Critical Implementation Paths
+
+- Native audio engine implementation is the highest priority
+- sfizz library integration is a critical component
+- Proper thread management for audio processing
+- Memory management for audio assets
+
+## Known Challenges
+
+- Audio latency varies by device and platform
+- Memory management for large sample libraries
+- Threading model complexity
+- Platform-specific audio implementation differences 

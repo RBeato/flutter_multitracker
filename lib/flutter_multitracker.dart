@@ -797,6 +797,90 @@ class FlutterMultitracker {
     }
   }
   
+  /// Load an SF2 soundfont instrument
+  /// 
+  /// [sf2Path] is the path to the SF2 file.
+  /// [isAsset] indicates whether the path is an asset path.
+  /// [preset] is the preset number (default: 0).
+  /// [bank] is the bank number (default: 0).
+  /// 
+  /// Returns the instrument ID if successful, or null if failed.
+  Future<Instrument?> loadInstrumentFromSF2({
+    required String sf2Path,
+    bool isAsset = true,
+    int preset = 0,
+    int bank = 0,
+  }) async {
+    try {
+      String filePath = sf2Path;
+      
+      // If it's an asset, extract it to a temporary file
+      if (isAsset) {
+        filePath = await _extractAssetToTemp(sf2Path);
+      }
+      
+      // Load the SF2 instrument
+      final int? id = await _channel.invokeMethod('loadInstrumentFromSF2', {
+        'sf2Path': filePath,
+        'preset': preset,
+        'bank': bank,
+      });
+      
+      if (id != null && id >= 0) {
+        final instrument = Instrument(
+          id: id,
+          name: 'SF2 Instrument',
+          type: 'sf2',
+        );
+        _instruments[id] = instrument;
+        return instrument;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error loading SF2 instrument: $e');
+      return null;
+    }
+  }
+  
+  /// Load an SFZ instrument
+  /// 
+  /// [sfzPath] is the path to the SFZ file.
+  /// [isAsset] indicates whether the path is an asset path.
+  /// 
+  /// Returns the instrument ID if successful, or null if failed.
+  Future<Instrument?> loadInstrumentFromSFZ({
+    required String sfzPath,
+    bool isAsset = true,
+  }) async {
+    try {
+      String filePath = sfzPath;
+      
+      // If it's an asset, extract it to a temporary file
+      if (isAsset) {
+        filePath = await _extractAssetToTemp(sfzPath);
+      }
+      
+      // Load the SFZ instrument
+      final int? id = await _channel.invokeMethod('loadInstrumentFromSFZ', {
+        'sfzPath': filePath,
+      });
+      
+      if (id != null && id >= 0) {
+        final instrument = Instrument(
+          id: id,
+          name: 'SFZ Instrument',
+          type: 'sfz',
+        );
+        _instruments[id] = instrument;
+        return instrument;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error loading SFZ instrument: $e');
+      return null;
+    }
+  }
+  
   /// Load a WAV file for each note in a range.
   /// 
   /// [instrumentId] is the ID of the instrument.
@@ -915,6 +999,30 @@ class FlutterMultitracker {
     } catch (e) {
       debugPrint('Error extracting asset: $e');
       rethrow;
+    }
+  }
+
+  /// Load a piano instrument with synthetic piano sounds
+  /// 
+  /// Returns the instrument ID if successful, or null if failed.
+  Future<Instrument?> loadPianoInstrument() async {
+    try {
+      // Load the piano instrument
+      final int? id = await _channel.invokeMethod('loadPianoInstrument');
+      
+      if (id != null && id >= 0) {
+        final instrument = Instrument(
+          id: id,
+          name: 'Piano',
+          type: 'sample',
+        );
+        _instruments[id] = instrument;
+        return instrument;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error loading piano instrument: $e');
+      return null;
     }
   }
 }

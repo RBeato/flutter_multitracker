@@ -814,6 +814,9 @@ public class AudioEngine {
         private float sustain = 0.7f;  // Sustain level (0.0 to 1.0)
         private float release = 0.3f;  // Release time in seconds
 
+        // Map of MIDI note numbers to samples
+        Map<Integer, Sample> samples = new HashMap<>();
+
         public Instrument(int id, String name, InstrumentType type, float volume) {
             this.id = id;
             this.name = name;
@@ -1018,6 +1021,12 @@ public class AudioEngine {
                 InstrumentType instrumentType = InstrumentType.UNKNOWN;
                 if (type.equalsIgnoreCase("sine") || type.equalsIgnoreCase("sine_wave")) {
                     instrumentType = InstrumentType.SINE_WAVE;
+                } else if (type.equalsIgnoreCase("sf2")) {
+                    instrumentType = InstrumentType.SF2_BASED;
+                } else if (type.equalsIgnoreCase("sample")) {
+                    instrumentType = InstrumentType.SAMPLE_BASED;
+                } else if (type.equalsIgnoreCase("sfz")) {
+                    instrumentType = InstrumentType.SFZ_BASED;
                 }
 
                 // Create instrument
@@ -1136,12 +1145,17 @@ public class AudioEngine {
      */
     private short[] loadWavFile(java.io.File file) {
         try {
+            Log.i(TAG, "Loading WAV file: " + file.getAbsolutePath());
             java.io.FileInputStream fis = new java.io.FileInputStream(file);
             java.io.BufferedInputStream bis = new java.io.BufferedInputStream(fis);
             
             // Read WAV header
-            byte[] header = new byte[44]; // Standard WAV header size
-            bis.read(header, 0, header.length);
+            byte[] header = new byte[12]; // RIFF header + chunk size + WAVE
+            if (bis.read(header, 0, header.length) != header.length) {
+                Log.e(TAG, "Failed to read WAV header");
+                bis.close();
+                return null;
+            }
             
             // Verify it's a WAV file (RIFF header)
             if (header[0] != 'R' || header[1] != 'I' || header[2] != 'F' || header[3] != 'F') {
@@ -1157,129 +1171,291 @@ public class AudioEngine {
                 return null;
             }
             
-            // Check for PCM format (should be 1)
-            int format = (header[21] << 8) | (header[20] & 0xFF);
-            if (format != 1) {
-                Log.e(TAG, "Unsupported WAV format (not PCM): " + format);
-                bis.close();
-                return null;
-            }
-            
-            // Get number of channels
-            int channels = (header[23] << 8) | (header[22] & 0xFF);
-            
-            // Get sample rate
-            int sampleRate = ((header[27] & 0xFF) << 24) | ((header[26] & 0xFF) << 16) | 
-                             ((header[25] & 0xFF) << 8) | (header[24] & 0xFF);
-            
-            // Get bits per sample
-            int bitsPerSample = (header[35] << 8) | (header[34] & 0xFF);
-            
-            // Find data chunk
+            // Variables to store format information
+            int format = 1; // Default to PCM
+            int channels = 1;
+            int sampleRate = 44100;
+            int bitsPerSample = 16;
             int dataSize = 0;
+            
+            // Read chunks until we find the data chunk
             byte[] chunkHeader = new byte[8];
-            while (true) {
+            boolean foundFmt = false;
+            boolean foundData = false;
+            
+            while (!foundData) {
                 int bytesRead = bis.read(chunkHeader, 0, chunkHeader.length);
                 if (bytesRead < chunkHeader.length) {
-                    Log.e(TAG, "Unexpected end of file while searching for data chunk");
+                    if (!foundFmt) {
+                        Log.e(TAG, "Unexpected end of file before fmt chunk");
+                        bis.close();
+                        return null;
+                    }
+                    
+                    // If we've found the fmt chunk but not the data chunk, we'll try to create
+                    // a silent sample with default parameters
+                    Log.w(TAG, "Reached end of file without finding data chunk, creating silent sample");
+                    short[] silentSample = new short[sampleRate]; // 1 second of silence
                     bis.close();
-                    return null;
+                    return silentSample;
                 }
                 
-                // Check if this is the data chunk
-                if (chunkHeader[0] == 'd' && chunkHeader[1] == 'a' && chunkHeader[2] == 't' && chunkHeader[3] == 'a') {
-                    dataSize = ((chunkHeader[7] & 0xFF) << 24) | ((chunkHeader[6] & 0xFF) << 16) | 
-                               ((chunkHeader[5] & 0xFF) << 8) | (chunkHeader[4] & 0xFF);
-                    break;
-                }
+                // Get chunk ID as string
+                String chunkId = new String(chunkHeader, 0, 4);
                 
-                // Skip this chunk
+                // Get chunk size (little endian)
                 int chunkSize = ((chunkHeader[7] & 0xFF) << 24) | ((chunkHeader[6] & 0xFF) << 16) | 
-                                ((chunkHeader[5] & 0xFF) << 8) | (chunkHeader[4] & 0xFF);
-                bis.skip(chunkSize);
+                               ((chunkHeader[5] & 0xFF) << 8) | (chunkHeader[4] & 0xFF);
+                
+                Log.d(TAG, "Found chunk: " + chunkId + " with size: " + chunkSize);
+                
+                if (chunkId.equals("fmt ")) {
+                    // Format chunk
+                    foundFmt = true;
+                    
+                    // Read format chunk
+                    byte[] fmtChunk = new byte[Math.min(chunkSize, 16)]; // Read at least the basic format info
+                    if (bis.read(fmtChunk, 0, fmtChunk.length) != fmtChunk.length) {
+                        Log.e(TAG, "Failed to read format chunk");
+                        bis.close();
+                        return null;
+                    }
+                    
+                    // Get format code (little endian)
+                    format = ((fmtChunk[1] & 0xFF) << 8) | (fmtChunk[0] & 0xFF);
+                    
+                    // Get number of channels (little endian)
+                    channels = ((fmtChunk[3] & 0xFF) << 8) | (fmtChunk[2] & 0xFF);
+                    
+                    // Get sample rate (little endian)
+                    sampleRate = ((fmtChunk[7] & 0xFF) << 24) | ((fmtChunk[6] & 0xFF) << 16) | 
+                                ((fmtChunk[5] & 0xFF) << 8) | (fmtChunk[4] & 0xFF);
+                    
+                    // Skip to bits per sample if we read less than the full chunk
+                    if (fmtChunk.length >= 16) {
+                        // Get bits per sample (little endian)
+                        bitsPerSample = ((fmtChunk[15] & 0xFF) << 8) | (fmtChunk[14] & 0xFF);
+                    } else {
+                        // Skip the rest of the chunk
+                        bis.skip(chunkSize - fmtChunk.length);
+                    }
+                    
+                    // Log format information
+                    Log.i(TAG, "WAV format: " + format + ", channels: " + channels + 
+                          ", sample rate: " + sampleRate + ", bits per sample: " + bitsPerSample);
+                    
+                    // Check if format is supported
+                    // We'll support PCM (1) and also try to handle format code 26548 that appears in our WAV files
+                    if (format != 1 && format != 26548) {
+                        Log.w(TAG, "Unsupported WAV format (not PCM): " + format + " - will try to read anyway");
+                    }
+                } else if (chunkId.equals("data")) {
+                    // Data chunk
+                    foundData = true;
+                    dataSize = chunkSize;
+                    
+                    // Log data size
+                    Log.i(TAG, "WAV data size: " + dataSize + " bytes");
+                    
+                    // If we haven't found the format chunk yet, use default values
+                    if (!foundFmt) {
+                        Log.w(TAG, "No format chunk found before data chunk, using default values");
+                    }
+                    
+                    // Calculate number of samples
+                    int bytesPerSample = bitsPerSample / 8;
+                    int samplesPerChannel = dataSize / (bytesPerSample * channels);
+                    
+                    // Read sample data
+                    short[] sampleData;
+                    
+                    if (channels == 1) {
+                        // Mono
+                        sampleData = new short[samplesPerChannel];
+                        
+                        if (bitsPerSample == 16) {
+                            // 16-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (bytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = bytesRead / 2;
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                // Convert bytes to short (little endian)
+                                if (i * 2 + 1 < bytesRead) {
+                                    sampleData[i] = (short)(((buffer[i * 2 + 1] & 0xFF) << 8) | (buffer[i * 2] & 0xFF));
+                                } else if (i * 2 < bytesRead) {
+                                    // Handle odd number of bytes
+                                    sampleData[i] = (short)(buffer[i * 2] & 0xFF);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 8) {
+                            // 8-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (bytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = bytesRead;
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i < bytesRead) {
+                                    // Convert 8-bit unsigned to 16-bit signed
+                                    sampleData[i] = (short)(((buffer[i] & 0xFF) - 128) * 256);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else {
+                            Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
+                            bis.close();
+                            return null;
+                        }
+                    } else if (channels == 2) {
+                        // Stereo - we'll convert to mono by averaging channels
+                        sampleData = new short[samplesPerChannel];
+                        
+                        if (bitsPerSample == 16) {
+                            // 16-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (bytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = bytesRead / 4;
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * 4 + 3 < bytesRead) {
+                                    // Convert bytes to short (little endian)
+                                    short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
+                                    short right = (short)(((buffer[i * 4 + 3] & 0xFF) << 8) | (buffer[i * 4 + 2] & 0xFF));
+                                    
+                                    // Average the channels
+                                    sampleData[i] = (short)((left + right) / 2);
+                                } else if (i * 4 + 1 < bytesRead) {
+                                    // We have at least the left channel
+                                    short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
+                                    sampleData[i] = left;
+                                } else if (i * 4 < bytesRead) {
+                                    // Handle odd number of bytes
+                                    sampleData[i] = (short)(buffer[i * 4] & 0xFF);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 8) {
+                            // 8-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (bytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = bytesRead / 2;
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * 2 + 1 < bytesRead) {
+                                    // Convert 8-bit unsigned to 16-bit signed and average channels
+                                    short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
+                                    short right = (short)(((buffer[i * 2 + 1] & 0xFF) - 128) * 256);
+                                    
+                                    // Average the channels
+                                    sampleData[i] = (short)((left + right) / 2);
+                                } else if (i * 2 < bytesRead) {
+                                    // We have at least the left channel
+                                    short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
+                                    sampleData[i] = left;
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else {
+                            Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
+                            bis.close();
+                            return null;
+                        }
+                    } else {
+                        // More than 2 channels - we'll convert to mono by reading only the first channel
+                        Log.w(TAG, "WAV file has " + channels + " channels, will use only the first channel");
+                        
+                        sampleData = new short[samplesPerChannel];
+                        int bytesPerFrame = bytesPerSample * channels;
+                        
+                        if (bitsPerSample == 16) {
+                            // 16-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * bytesPerFrame + 1 < bytesRead) {
+                                    // Convert bytes to short (little endian) - first channel only
+                                    sampleData[i] = (short)(((buffer[i * bytesPerFrame + 1] & 0xFF) << 8) | 
+                                                           (buffer[i * bytesPerFrame] & 0xFF));
+                                } else if (i * bytesPerFrame < bytesRead) {
+                                    // Handle odd number of bytes
+                                    sampleData[i] = (short)(buffer[i * bytesPerFrame] & 0xFF);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 8) {
+                            // 8-bit samples
+                            byte[] buffer = new byte[dataSize];
+                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * bytesPerFrame < bytesRead) {
+                                    // Convert 8-bit unsigned to 16-bit signed - first channel only
+                                    sampleData[i] = (short)(((buffer[i * bytesPerFrame] & 0xFF) - 128) * 256);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else {
+                            Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
+                            bis.close();
+                            return null;
+                        }
+                    }
+                    
+                    bis.close();
+                    Log.i(TAG, "Successfully loaded WAV file: " + file.getName() + 
+                          " (format: " + format + ", channels: " + channels + ", sample rate: " + sampleRate + 
+                          ", bits: " + bitsPerSample + ", samples: " + sampleData.length + ")");
+                    
+                    return sampleData;
+                } else {
+                    // Skip unknown chunk
+                    Log.d(TAG, "Skipping unknown chunk: " + chunkId + " with size: " + chunkSize);
+                    bis.skip(chunkSize);
+                }
             }
             
-            // Calculate number of samples
-            int bytesPerSample = bitsPerSample / 8;
-            int numSamples = dataSize / bytesPerSample;
-            
-            // Read sample data
-            short[] sampleData;
-            if (channels == 1) {
-                // Mono
-                sampleData = new short[numSamples];
-                
-                if (bitsPerSample == 16) {
-                    // 16-bit samples
-                    byte[] buffer = new byte[dataSize];
-                    bis.read(buffer, 0, buffer.length);
-                    
-                    for (int i = 0; i < numSamples; i++) {
-                        // Convert bytes to short (little endian)
-                        sampleData[i] = (short)(((buffer[i * 2 + 1] & 0xFF) << 8) | (buffer[i * 2] & 0xFF));
-                    }
-                } else if (bitsPerSample == 8) {
-                    // 8-bit samples
-                    byte[] buffer = new byte[dataSize];
-                    bis.read(buffer, 0, buffer.length);
-                    
-                    for (int i = 0; i < numSamples; i++) {
-                        // Convert 8-bit unsigned to 16-bit signed
-                        sampleData[i] = (short)(((buffer[i] & 0xFF) - 128) * 256);
-                    }
-                } else {
-                    Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
-                    bis.close();
-                    return null;
-                }
-            } else if (channels == 2) {
-                // Stereo - we'll convert to mono by averaging channels
-                int numMonoSamples = numSamples / 2;
-                sampleData = new short[numMonoSamples];
-                
-                if (bitsPerSample == 16) {
-                    // 16-bit samples
-                    byte[] buffer = new byte[dataSize];
-                    bis.read(buffer, 0, buffer.length);
-                    
-                    for (int i = 0; i < numMonoSamples; i++) {
-                        // Convert bytes to short (little endian)
-                        short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
-                        short right = (short)(((buffer[i * 4 + 3] & 0xFF) << 8) | (buffer[i * 4 + 2] & 0xFF));
-                        
-                        // Average the channels
-                        sampleData[i] = (short)((left + right) / 2);
-                    }
-                } else if (bitsPerSample == 8) {
-                    // 8-bit samples
-                    byte[] buffer = new byte[dataSize];
-                    bis.read(buffer, 0, buffer.length);
-                    
-                    for (int i = 0; i < numMonoSamples; i++) {
-                        // Convert 8-bit unsigned to 16-bit signed and average channels
-                        short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
-                        short right = (short)(((buffer[i * 2 + 1] & 0xFF) - 128) * 256);
-                        
-                        // Average the channels
-                        sampleData[i] = (short)((left + right) / 2);
-                    }
-                } else {
-                    Log.e(TAG, "Unsupported bits per sample: " + bitsPerSample);
-                    bis.close();
-                    return null;
-                }
-            } else {
-                Log.e(TAG, "Unsupported number of channels: " + channels);
-                bis.close();
-                return null;
-            }
-            
+            // We should never reach here if we found the data chunk
+            Log.e(TAG, "Failed to find data chunk in WAV file");
             bis.close();
-            Log.i(TAG, "Successfully loaded WAV file: " + file.getName() + 
-                  " (channels: " + channels + ", sample rate: " + sampleRate + 
-                  ", bits: " + bitsPerSample + ", samples: " + sampleData.length + ")");
-            
-            return sampleData;
+            return null;
         } catch (Exception e) {
             Log.e(TAG, "Exception loading WAV file: " + e.getMessage());
             e.printStackTrace();
@@ -1491,5 +1667,58 @@ public class AudioEngine {
                 phases.put(note, (float)newPhase);
             }
         }
+    }
+
+    /**
+     * Store sample data for an instrument.
+     * 
+     * @param instrumentId The ID of the instrument to store the sample for.
+     * @param note The MIDI note number to associate with this sample.
+     * @param sampleData The audio sample data as an array of shorts.
+     * @param sampleRate The sample rate of the audio data.
+     * @return true if the sample was stored successfully, false otherwise.
+     */
+    public boolean storeSampleData(int instrumentId, int note, short[] sampleData, int sampleRate) {
+        if (!isInitialized()) {
+            Log.e(TAG, "Audio engine not initialized");
+            return false;
+        }
+        
+        if (!instruments.containsKey(instrumentId)) {
+            Log.e(TAG, "Instrument with ID " + instrumentId + " does not exist");
+            return false;
+        }
+        
+        try {
+            // Get the instrument
+            Instrument instrument = instruments.get(instrumentId);
+            
+            // Create a new sample
+            Sample sample = new Sample();
+            sample.sampleData = sampleData;
+            sample.sampleRate = sampleRate;
+            sample.numChannels = 1; // Mono
+            sample.bitsPerSample = 16; // 16-bit
+            
+            // Store the sample in the instrument
+            instrument.samples.put(note, sample);
+            
+            Log.i(TAG, "Stored sample data for instrument " + instrumentId + ", note " + note + 
+                  " (" + sampleData.length + " samples at " + sampleRate + " Hz)");
+            
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Exception in storeSampleData: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+    }
+    
+    // Inner class to represent a sample
+    private class Sample {
+        short[] sampleData;
+        int sampleRate;
+        int numChannels;
+        int bitsPerSample;
     }
 } 

@@ -209,6 +209,7 @@ bool AudioEngine::init(int sampleRate, int framesPerBuffer) {
     AVAudioFormat* format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:sampleRate channels:2];
     
     // Create source node with render block
+    AudioEngine* enginePtr = this;  // Create a local pointer to 'this'
     m_sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(BOOL *isSilence, const AudioTimeStamp *timestamp, AVAudioFrameCount frameCount, AudioBufferList *outputData) {
         // Get buffer for processing
         float* buffer = (float*)outputData->mBuffers[0].mData;
@@ -219,7 +220,7 @@ bool AudioEngine::init(int sampleRate, int framesPerBuffer) {
         memset(buffer, 0, totalFrames * sizeof(float));
         
         // Process audio
-        self->processBuffer(buffer, frameCount);
+        enginePtr->processBuffer(buffer, frameCount);
         
         *isSilence = NO;
         return noErr;
@@ -415,8 +416,8 @@ SequenceManager::SequenceManager(AudioEngine* engine, InstrumentManager* instrum
       m_nextSequenceId(1),
       m_nextTrackId(1),
       m_activeSequenceId(-1),
-      m_currentPositionInBeats(0.0),
-      m_lastProcessTimeMs(0.0),
+      m_currentPositionInBeats(0),
+      m_lastProcessTimeMs(0),
       m_isPlaying(false) {
     NSLog(@"SequenceManager created");
 }
@@ -427,7 +428,6 @@ SequenceManager::~SequenceManager() {
 
 int SequenceManager::createSequence(double tempo, double lengthInBeats) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    NSLog(@"Creating sequence with tempo %f, length %f beats", tempo, lengthInBeats);
     
     int sequenceId = m_nextSequenceId++;
     auto& sequence = m_sequences[sequenceId];
@@ -443,20 +443,18 @@ int SequenceManager::createSequence(double tempo, double lengthInBeats) {
 
 bool SequenceManager::deleteSequence(int sequenceId) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    NSLog(@"Deleting sequence with ID %d", sequenceId);
     
     auto it = m_sequences.find(sequenceId);
     if (it == m_sequences.end()) {
-        NSLog(@"Sequence with ID %d not found", sequenceId);
         return false;
     }
     
-    if (m_activeSequenceId == sequenceId && m_isPlaying) {
+    if (m_activeSequenceId == sequenceId) {
         stopPlayback();
+        m_activeSequenceId = -1;
     }
     
     m_sequences.erase(it);
-    NSLog(@"Deleted sequence with ID %d", sequenceId);
     return true;
 }
 
@@ -473,29 +471,293 @@ Sequence* SequenceManager::getSequence(int sequenceId) {
 
 int SequenceManager::addTrack(int sequenceId, int instrumentId) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    NSLog(@"Adding track with instrument %d to sequence %d", instrumentId, sequenceId);
     
-    auto sequenceIt = m_sequences.find(sequenceId);
-    if (sequenceIt == m_sequences.end()) {
-        NSLog(@"Sequence with ID %d not found", sequenceId);
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
         return -1;
     }
     
-    // Check if instrument exists
-    if (m_instrumentManager->getInstrument(instrumentId) == nullptr) {
-        NSLog(@"Instrument with ID %d not found", instrumentId);
+    if (!m_instrumentManager->getInstrument(instrumentId)) {
         return -1;
     }
     
     int trackId = m_nextTrackId++;
-    auto& track = sequenceIt->second.tracks[trackId];
+    auto& track = sequence->tracks[trackId];
     
     track.id = trackId;
     track.instrumentId = instrumentId;
     track.volume = 1.0f;
     
-    NSLog(@"Added track with ID %d to sequence %d", trackId, sequenceId);
     return trackId;
+}
+
+bool SequenceManager::deleteTrack(int sequenceId, int trackId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return false;
+    }
+    
+    auto it = sequence->tracks.find(trackId);
+    if (it == sequence->tracks.end()) {
+        return false;
+    }
+    
+    sequence->tracks.erase(it);
+    return true;
+}
+
+int SequenceManager::addNote(int sequenceId, int trackId, int noteNumber, int velocity, double startTime, double duration) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return -1;
+    }
+    
+    auto it = sequence->tracks.find(trackId);
+    if (it == sequence->tracks.end()) {
+        return -1;
+    }
+    
+    auto& track = it->second;
+    
+    Note note;
+    note.noteNumber = noteNumber;
+    note.velocity = velocity;
+    note.startTimeInBeats = startTime;
+    note.durationInBeats = duration;
+    
+    track.notes.push_back(note);
+    return track.notes.size() - 1; // Return the index as note ID
+}
+
+bool SequenceManager::deleteNote(int sequenceId, int trackId, int noteId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return false;
+    }
+    
+    auto trackIt = sequence->tracks.find(trackId);
+    if (trackIt == sequence->tracks.end()) {
+        return false;
+    }
+    
+    auto& track = trackIt->second;
+    
+    if (noteId < 0 || noteId >= track.notes.size()) {
+        return false;
+    }
+    
+    track.notes.erase(track.notes.begin() + noteId);
+    return true;
+}
+
+int SequenceManager::addVolumeAutomation(int sequenceId, int trackId, double timeInBeats, float volume) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return -1;
+    }
+    
+    auto trackIt = sequence->tracks.find(trackId);
+    if (trackIt == sequence->tracks.end()) {
+        return -1;
+    }
+    
+    auto& track = trackIt->second;
+    
+    AutomationPoint point;
+    point.timeInBeats = timeInBeats;
+    point.value = volume;
+    
+    track.volumeAutomation.push_back(point);
+    return track.volumeAutomation.size() - 1; // Return the index as automation ID
+}
+
+bool SequenceManager::deleteVolumeAutomation(int sequenceId, int trackId, int automationId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return false;
+    }
+    
+    auto trackIt = sequence->tracks.find(trackId);
+    if (trackIt == sequence->tracks.end()) {
+        return false;
+    }
+    
+    auto& track = trackIt->second;
+    
+    if (automationId < 0 || automationId >= track.volumeAutomation.size()) {
+        return false;
+    }
+    
+    track.volumeAutomation.erase(track.volumeAutomation.begin() + automationId);
+    return true;
+}
+
+void SequenceManager::setTrackVolume(int sequenceId, int trackId, float volume) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return;
+    }
+    
+    auto trackIt = sequence->tracks.find(trackId);
+    if (trackIt == sequence->tracks.end()) {
+        return;
+    }
+    
+    trackIt->second.volume = volume;
+}
+
+void SequenceManager::startPlayback(int sequenceId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!getSequence(sequenceId)) {
+        return;
+    }
+    
+    m_activeSequenceId = sequenceId;
+    m_isPlaying = true;
+    m_lastProcessTimeMs = 0;
+    
+    NSLog(@"Started playback of sequence %d", sequenceId);
+}
+
+void SequenceManager::stopPlayback() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    m_isPlaying = false;
+    m_currentPositionInBeats = 0;
+    
+    NSLog(@"Stopped playback");
+}
+
+void SequenceManager::setPlaybackPosition(double positionInBeats) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    m_currentPositionInBeats = positionInBeats;
+}
+
+double SequenceManager::getPlaybackPosition() const {
+    // Can't use std::lock_guard in a const method with a non-const mutex
+    // Instead, return the value directly
+    return m_currentPositionInBeats;
+}
+
+void SequenceManager::setTempo(int sequenceId, double tempo) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return;
+    }
+    
+    sequence->tempo = tempo;
+}
+
+void SequenceManager::setLooping(int sequenceId, bool isLooping) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto* sequence = getSequence(sequenceId);
+    if (!sequence) {
+        return;
+    }
+    
+    sequence->isLooping = isLooping;
+}
+
+void SequenceManager::processAudio(double sampleRate, double bufferSize) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!m_isPlaying || m_activeSequenceId == -1) {
+        return;
+    }
+    
+    auto* sequence = getSequence(m_activeSequenceId);
+    if (!sequence) {
+        return;
+    }
+    
+    // Calculate time increment
+    double bufferSizeInSec = bufferSize / sampleRate;
+    double bufferSizeInBeats = bufferSizeInSec * (sequence->tempo / 60.0);
+    
+    // Calculate positions
+    double prevPosition = m_currentPositionInBeats;
+    m_currentPositionInBeats += bufferSizeInBeats;
+    
+    // Handle looping
+    if (sequence->isLooping && m_currentPositionInBeats >= sequence->lengthInBeats) {
+        m_currentPositionInBeats = fmod(m_currentPositionInBeats, sequence->lengthInBeats);
+        prevPosition = -1; // Force processing of all notes
+    }
+    
+    // Process notes
+    processActiveNotes(m_currentPositionInBeats, prevPosition, sampleRate);
+}
+
+float SequenceManager::getTrackVolumeAtPosition(const Track& track, double positionInBeats) {
+    if (track.volumeAutomation.empty()) {
+        return track.volume;
+    }
+    
+    // Find the two automation points surrounding the position
+    const AutomationPoint* prev = nullptr;
+    const AutomationPoint* next = nullptr;
+    
+    for (const auto& point : track.volumeAutomation) {
+        if (point.timeInBeats <= positionInBeats) {
+            prev = &point;
+        } else {
+            next = &point;
+            break;
+        }
+    }
+    
+    if (!prev) {
+        return next ? next->value : track.volume;
+    }
+    
+    if (!next) {
+        return prev->value;
+    }
+    
+    // Interpolate between the two points
+    double t = (positionInBeats - prev->timeInBeats) / (next->timeInBeats - prev->timeInBeats);
+    return prev->value + t * (next->value - prev->value);
+}
+
+void SequenceManager::processActiveNotes(double positionInBeats, double previousPositionInBeats, double sampleRate) {
+    auto* sequence = getSequence(m_activeSequenceId);
+    if (!sequence) {
+        return;
+    }
+    
+    for (const auto& trackPair : sequence->tracks) {
+        const auto& track = trackPair.second;
+        
+        for (const auto& note : track.notes) {
+            // Note starts in this buffer
+            if (note.startTimeInBeats >= previousPositionInBeats && note.startTimeInBeats < positionInBeats) {
+                m_instrumentManager->sendNoteOn(track.instrumentId, note.noteNumber, note.velocity);
+            }
+            
+            // Note ends in this buffer
+            double endTime = note.startTimeInBeats + note.durationInBeats;
+            if (endTime >= previousPositionInBeats && endTime < positionInBeats) {
+                m_instrumentManager->sendNoteOff(track.instrumentId, note.noteNumber);
+            }
+        }
+    }
 }
 
 // C function implementations for bridging

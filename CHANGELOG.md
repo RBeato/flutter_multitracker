@@ -1,204 +1,139 @@
-## 0.0.1
+# Changelog
 
-* Initial release with basic audio engine setup
-* Placeholder implementation for instrument loading
+## 1.0.3 - 2023-12-17
 
-## 0.0.2
+### Added
+- Synthetic TR-808 drum sound generation for Android implementation
+  - Implemented realistic bass drum with pitch drop and distortion
+  - Added snare drum with tone and noise components
+  - Created hi-hat sounds with filtered noise and resonance
+  - Added crash and ride cymbal sounds with metallic characteristics
+- Synthetic piano sound generation with realistic characteristics
+  - Multiple harmonics with proper amplitude relationships
+  - Harmonic-specific decay rates for natural piano sound
+  - Hammer noise simulation for attack transients
+  - String resonance effects for richer sound
+  - Note-dependent decay times (longer for lower notes)
+- Custom envelope settings for all instruments
+- Direct sample data storage in audio engine
+- New Dart API method: `loadPianoInstrument()`
 
-* Added basic MIDI sequencing capabilities
-* Added support for loading SFZ instruments (placeholder implementation)
-* Added support for creating sequences and tracks
-* Added support for adding notes to tracks
-* Added support for playback control
+### Fixed
+- Resolved issues with SF2 instrument loading by implementing synthetic sounds
+- Eliminated dependency on external WAV files for instrument sounds
+- Fixed audio playback issues when sample files are missing or in unsupported formats
 
-## 0.0.3
+### Improved
+- More realistic instrument sounds with proper acoustic characteristics
+- Better audio quality for percussion and piano instruments
+- Reduced latency by generating sounds directly in memory
+- More complete instrument palette for music creation
 
-* Complete rewrite of the audio engine to use pure sine wave synthesis
-* Removed sfizz dependency for better stability and performance
-* Simplified API for easier integration
-* Added robust error handling throughout the codebase
-* Fixed crashes when adding notes and during playback
-* Improved thread safety with proper mutex locking
+## 1.0.2 - 2023-12-16
 
-## 0.0.4 (2023-07-15)
+### Fixed
+- Improved SF2 instrument loading in Android implementation
+- Added support for loading individual drum samples from SF2 directory
+- Enhanced sample file discovery with multiple path patterns
+- Better fallback mechanism when specific samples are not found
+  - Added fallback to piano samples when drum samples are unavailable
+  - Only uses sine wave as a last resort
+- Enhanced logging for SF2 instrument loading process
+- Fixed WAV file format compatibility issues
+  - Added support for non-standard WAV formats (including format code 26548)
+  - Improved chunk parsing to handle files with unexpected structures
+  - Better error recovery when reading incomplete or corrupted WAV files
+  - Added fallback to silent samples when data chunk is missing
+- Added support for checking multiple directories for samples
 
-### Major Changes
-* Completely replaced the native OpenSL ES audio engine with a Java-based AudioTrack implementation
-* Moved audio synthesis to Java layer for better compatibility across devices
-* Simplified the native code to focus only on note and sequence management
-* Added fallback mechanisms for devices with incompatible audio hardware
-* Implemented comprehensive error handling and recovery
-* Added detailed logging throughout the audio pipeline
+### Summary
+This release focuses on improving the robustness of audio file loading, particularly for SF2 instruments and WAV files. The changes ensure that the TR-808 drum sounds are properly loaded and played, even when dealing with non-standard file formats or incomplete files. The enhanced error handling and fallback mechanisms provide a more reliable audio experience across different devices and file sources.
 
-### Technical Details
-* Removed OpenSL ES dependencies which were causing crashes on some devices
-* Implemented a pure Java AudioTrack-based audio engine
-* Simplified the native code to only handle note and sequence data
-* Added JNI callbacks for audio synthesis
-* Implemented proper thread synchronization between Java and native code
-* Added graceful degradation for low-end devices
-* Improved error reporting and diagnostics
+## 1.0.1 - 2023-12-15
 
-## 0.0.5 (2023-07-16 17:30)
+### Fixed
+- SF2 instrument type handling in Android implementation
+- Drum sounds now correctly use the TR-808 SF2 soundfont instead of falling back to sine wave
+- Instrument type detection for sample-based and SFZ instruments
 
-* Complete rewrite of audio engine using Java AudioTrack API
-* Removed all native OpenSL ES code to fix freezing issues
-* Implemented pure Kotlin-based audio synthesis
-* Added comprehensive error handling and diagnostics
-* Improved thread safety with proper synchronization
-* Enhanced audio quality with soft clipping to prevent distortion
-* Added detailed logging for better debugging
-* Simplified API for better usability
-* Improved example app with interactive piano keyboard
+### Improved
+- Audio engine stability and performance
+- Documentation for instrument type handling
 
-## 0.0.6 (2023-07-16 18:45)
+## 0.1.0 - 2023-07-15
 
-* Fixed Kotlin compilation issues in AudioEngine implementation
-* Improved buffer handling for better audio quality
-* Enhanced thread safety with proper synchronization primitives
-* Optimized audio rendering loop for better performance
-* Added safeguards against null pointer exceptions
-* Improved error handling and recovery mechanisms
-* Updated example app with more responsive piano keyboard interface
+### Added
+- Initial release with basic audio synthesis capabilities
+- Sine wave instrument generation
+- ADSR envelope control
+- Basic MIDI note handling (noteOn/noteOff)
 
-## 0.0.7 (2023-07-16 19:30)
+## 0.2.0 - 2023-08-01
 
-* Replaced Kotlin implementation with pure Java implementation for better compatibility
-* Fixed all compilation issues related to Kotlin syntax
-* Enhanced thread safety with additional synchronization
-* Improved null safety throughout the codebase
-* Optimized audio buffer handling for better performance
-* Added more robust error handling and recovery mechanisms
-* Improved logging for better diagnostics
-* Updated FlutterMultitrackerPlugin to work with Java implementation
+### Added
+- Sample-based instrument support
+- WAV file loading
+- Multi-track sequencing
+- Piano keyboard UI component
 
-## 0.0.8 (2023-07-16 20:15)
+### Fixed
+- Audio glitches in note playback
+- Memory leaks in audio engine
 
-* Successfully implemented working audio synthesis with Java AudioTrack
-* Fixed all remaining compilation and runtime issues
-* Achieved stable audio playback with the piano keyboard interface
-* Optimized sine wave generation for better sound quality
-* Implemented proper note velocity handling for dynamic expression
-* Enhanced thread safety for audio rendering thread
-* Improved error handling and recovery for audio buffer processing
-* Added comprehensive logging for debugging and monitoring
+## 0.3.0 - 2023-09-10
 
-## 0.0.9 - 2023-07-17 10:30
+### Added
+- Sequencer with tempo control
+- Loop functionality
+- Track management (add/delete)
+- Note editing capabilities
 
-* Added ADSR envelope control for more expressive sound synthesis
-* Improved audio quality with soft clipping to prevent distortion
-* Enhanced note handling with proper velocity scaling
-* Optimized audio rendering for better performance
-* Added comprehensive error handling and recovery
-* Updated example app with envelope control sliders
+### Improved
+- Audio engine performance
+- UI responsiveness
 
-## Debugging Log: App Freezing Issue
+## 0.4.0 - 2023-10-20
 
-### 14:30 - Initial Problem Identification
-* App freezes on loading screen
-* No error messages in logs
-* Suspected issue with native audio initialization
+### Added
+- TR-808 drum machine interface
+- Drum pad UI with animation effects
+- Improved piano keyboard with note labels
+- Support for loading SF2 soundfonts
 
-### 14:45 - First Attempt: Improve Error Handling in JNI
-* Added more error logging in JNI code
-* Still freezing, but now getting some logs about OpenSL ES initialization
+### Fixed
+- Method channel naming inconsistencies
+- Sample loading issues
 
-### 15:00 - Second Attempt: Fix AudioEngine Initialization
-* Modified audio engine initialization to be more robust
-* Added timeouts to prevent UI freezing
-* Still freezing, but getting more detailed logs
+## 0.0.9 - 2023-07-17
 
-### 15:15 - Third Attempt: Improve UI Feedback
-* Added loading indicators and better error messages
-* Made UI more responsive during initialization
-* App still crashes during audio initialization
+### Added
+- SF2 soundfont loading for TR-808 drum sounds
+- Enhanced step sequencer interface similar to flutter_sequencer
+- Improved drum pad UI with LED indicators
+- Track selection interface for multi-track editing
 
-### 15:30 - Fourth Attempt: Fix Audio Format Issues
-* Changed PCM format from float to 16-bit integers
-* Updated buffer handling
-* Still experiencing crashes
+### Improved
+- Piano keyboard UI with better visual feedback
+- Drum machine interface with TR-808 inspired design
+- Overall UI consistency and aesthetics
+- Error handling and fallback mechanisms for audio loading
 
-### 15:45 - Fifth Attempt: Simplify Audio Engine
-* Removed complex features to isolate the issue
-* Focused on minimal working implementation
-* Still experiencing freezing
+## 1.0.0 - 2023-12-01
 
-### 16:00 - Root Cause Analysis
-* Identified issues with OpenSL ES initialization on certain devices
-* Memory management problems in native code
-* Thread synchronization issues between Java and native code
+### Added
+- Complete sequencer UI similar to flutter_sequencer
+- Step sequencer for drum patterns
+- Transport controls (play, pause, stop)
+- Project saving and loading
 
-### 16:15 - Next Steps
-* Create minimal working example to isolate the issue
-* Test on different devices to identify patterns
-* Consider alternative audio APIs
+### Improved
+- Overall UI design and user experience
+- Documentation and examples
+- Performance optimizations
 
-### 16:30 - Proposed Solution
-* Replace OpenSL ES with the Oboe audio library
-* Implement simpler audio engine architecture
-* Add better error recovery mechanisms
-
-### 17:00 - Final Solution
-* Completely replaced native OpenSL ES implementation with Java AudioTrack API
-* Moved all audio synthesis to the Java/Kotlin layer
-* Eliminated JNI complexity for audio processing
-* Implemented proper thread management and synchronization
-* Added comprehensive error handling and recovery
-* Created a more robust and device-compatible implementation
-
-### 18:45 - Kotlin Implementation Fixes
-* Fixed compilation issues in Kotlin AudioEngine implementation
-* Addressed issues with conditional expressions in Kotlin
-* Improved null safety throughout the codebase
-* Enhanced thread synchronization for audio rendering
-* Optimized buffer handling for better performance
-* Added more detailed logging for debugging
-
-### 19:30 - Java Implementation
-* Replaced Kotlin implementation with pure Java implementation
-* Fixed all compilation issues related to Kotlin syntax
-* Enhanced thread safety with additional synchronization
-* Improved null safety with explicit null checks
-* Optimized audio buffer handling for better performance
-* Added more robust error handling and recovery mechanisms
-* Updated FlutterMultitrackerPlugin to work with Java implementation
-
-### 20:15 - Success! Working Audio Implementation
-* Successfully implemented working audio synthesis with Java AudioTrack
-* Fixed all remaining compilation and runtime issues
-* Achieved stable audio playback with the piano keyboard interface
-* Verified sound generation for all piano keys
-* Confirmed proper note on/off functionality
-* Validated thread safety and performance
-* Next steps: Enhance the implementation with additional features and optimizations
-
-## 0.0.9 - 2023-07-17 17:30
-
-* Implemented full sequencing functionality
-* Added model classes for Sequence, Track, Note, and Instrument
-* Created SequenceManager for handling musical sequences
-* Added methods for creating and managing sequences, tracks, and notes
-* Implemented playback control with tempo and looping
-* Added track controls (volume, mute, solo)
-* Improved Dart API with proper type safety and null handling
-* Updated documentation with comprehensive API reference
-* Enhanced error handling and reporting
-
-## Debugging Log
-
-### 2023-07-16 - Freezing Issue Investigation
-* **14:30**: Initial problem identification - app freezes on loading screen
-* **14:45**: First attempt - improved error handling in JNI (no resolution)
-* **15:00**: Second attempt - fixed AudioEngine initialization (still freezing but more logs)
-* **15:15**: Third attempt - improved UI feedback (UI more responsive but still crashing during audio initialization)
-* **15:30**: Fourth attempt - fixed audio format issues (still crashing)
-* **15:45**: Fifth attempt - simplified audio engine (still freezing)
-* **16:00**: Root cause analysis - issues with OpenSL ES initialization and memory management
-* **16:15**: Next steps - create minimal working example, test on different devices
-* **16:30**: Proposed solution - replace OpenSL ES with Oboe audio library, implement simpler audio engine architecture
-
-### 2023-07-17 - Sequencing Implementation
-* **16:00**: Started implementing SequenceManager in Java
-* **16:30**: Added Dart model classes for sequences, tracks, and notes
-* **17:00**: Implemented method channel communication for sequence operations
-* **17:30**: Completed Dart API with proper error handling and state management
+## Future Plans
+- Support for more audio formats (MP3, OGG)
+- Audio effects (reverb, delay, etc.)
+- MIDI device integration
+- Audio recording capabilities
+- Waveform visualization
