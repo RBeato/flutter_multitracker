@@ -2,7 +2,7 @@
 
 ## System Architecture
 
-flutter_multitracker follows a layered architecture pattern:
+flutter_multitracker follows a layered architecture pattern with FFI for performance:
 
 ```
 ┌───────────────────────────────────────────┐
@@ -22,45 +22,48 @@ flutter_multitracker follows a layered architecture pattern:
   ├─────────────────┐
   │                 │
 ┌─▼─────────────┐ ┌─▼─────────────┐
-│ Method Channel│ │  Future       │
+│ Method Channel│ │ FFI           │
 │ Implementation│ │Implementation │
-└─┬─────────────┘ └───────────────┘
-  │
-  ├─────────────────┐
-  │                 │
-┌─▼─────────────┐ ┌─▼─────────────┐
+└─┬─────────────┘ └───┬───────────┘
+  │                   │ Direct memory access
+  │ IPC               │
+┌─▼─────────────┐ ┌───▼───────────┐
 │ Android Native│ │ iOS Native    │
 │ (Kotlin/Java) │ │ (Swift/ObjC)  │
 └─┬─────────────┘ └─┬─────────────┘
   │                 │
 ┌─▼─────────────┐ ┌─▼─────────────┐
-│ Android Audio │ │ iOS Audio     │
-│ Subsystem     │ │ Subsystem     │
+│ C++ Audio     │ │ C++ Audio     │
+│ Engine        │ │ Engine        │
 └───────────────┘ └───────────────┘
 ```
 
 ## Key Technical Decisions
 
-1. **Plugin Architecture**: Follows the federated plugin approach recommended by Flutter for maximum compatibility and maintainability.
+1. **FFI Over Method Channels**: 
+   - Using Dart FFI for direct native code access instead of Method Channels
+   - Eliminating serialization/deserialization overhead for performance-critical audio operations
+   - Maintaining Method Channels for non-performance-critical operations
 
-2. **Threading Model**: 
-   - Main Dart thread for API interactions
-   - Dedicated audio thread on native platforms for real-time audio processing
-   - Communication between threads using message passing to prevent blocking
+2. **Dedicated Audio Thread Management**:
+   - Implementing robust audio thread handling separate from the main UI thread
+   - Using proper synchronization mechanisms (mutexes, atomics) to prevent race conditions
+   - Callback handling between native code and Dart via dedicated message passing
 
-3. **Audio Engine Integration**:
-   - Android: Uses sfizz library for SFZ playback with native Android audio APIs
-   - iOS: Uses sfizz with AVAudioEngine and supports AudioUnit instruments
+3. **Native Audio Implementation**:
+   - Android: Optimized OpenSL ES implementation for low latency
+   - iOS: AVAudioEngine with proper AudioUnit integration
+   - Common C++ core for audio processing shared between platforms
 
-4. **Data Flow**:
-   - Model objects in Dart converted to platform-specific representations
-   - Method channel used for commands and state updates
-   - Callbacks from native to Dart for events and status updates
+4. **Resource Management**:
+   - Proper memory management for audio samples with caching
+   - Resource cleanup on context switches
+   - Memory-efficient instrument loading with on-demand sample management
 
-5. **State Management**:
-   - Plugin maintains internal state for sequences, tracks, and instruments
-   - State is synchronized between Dart and native code
-   - Operations are idempotent where possible for reliability
+5. **Plugin Architecture**: 
+   - Follows the federated plugin approach recommended by Flutter
+   - Implements proper FFI bindings generation
+   - Unified C++ core shared between platforms
 
 ## Design Patterns in Use
 
@@ -76,6 +79,8 @@ flutter_multitracker follows a layered architecture pattern:
 
 6. **Repository Pattern**: For managing instrument collections and their resources.
 
+7. **Bridge Pattern**: Connecting Dart API to native implementation through FFI.
+
 ## Component Relationships
 
 ### Models
@@ -86,15 +91,21 @@ flutter_multitracker follows a layered architecture pattern:
 - **Automation**: Represents control changes like volume over time
 
 ### Native Bridge
-- Method channel implementation handles serialization/deserialization
-- Commands flow from Dart to native
-- Events and status updates flow from native to Dart
-- Error handling spans both layers
+- FFI implementation for direct memory access and function calls
+- Proper memory management for shared resources
+- Callback system for event notifications
 
 ### Audio Engine
-- Manages audio resources (instruments, samples)
-- Handles scheduling of audio events
-- Processes audio in real-time
-- Manages memory usage for optimal performance
+- Unified C++ core implementation
+- Platform-specific audio output implementations
+- Thread-safe operation with proper synchronization
+- Memory-efficient sample management
+- Real-time processing capabilities
 
-This architecture ensures clear separation of concerns while maintaining high performance for audio processing tasks. 
+### Threading Model
+- Main Thread: UI rendering and user interactions
+- Audio Thread: Real-time audio processing and scheduling
+- Loading Thread: Asynchronous resource loading and processing
+- Communication through lock-free queues and atomics
+
+This architecture ensures high performance for audio processing tasks while maintaining a clean, maintainable codebase with clear separation of concerns. 

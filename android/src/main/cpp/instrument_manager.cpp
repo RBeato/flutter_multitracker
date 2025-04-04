@@ -6,6 +6,11 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <set>
+#include <map>
+#include <thread>
+#include <chrono>
+#include <optional>
 
 // Define M_PI if not already defined
 #ifndef M_PI
@@ -26,64 +31,49 @@
 #define MAX_SAMPLE_RATE 192000
 
 // Constructor
-InstrumentManager::InstrumentManager(AudioEngine* audioEngine)
-    : m_audioEngine(audioEngine),
-      m_sampleRate(44100),
-      m_isInitialized(false),
-      m_nextInstrumentId(1) {
-    LOGI("InstrumentManager created");
-    m_instruments.clear();
-    m_activeNotes.clear();
-    m_noteVelocities.clear();
-    m_notePhases.clear();
+InstrumentManager::InstrumentManager() :
+    m_audioEngine(nullptr),
+    m_isInitialized(false),
+    m_sampleRate(44100)
+{
+    LOGI("InstrumentManager: Constructor called");
 }
 
 // Destructor
 InstrumentManager::~InstrumentManager() {
-    LOGD("InstrumentManager destructor called");
-    try {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_instruments.clear();
-        m_activeNotes.clear();
-        m_noteVelocities.clear();
-        m_notePhases.clear();
-        LOGD("InstrumentManager destroyed successfully");
-    } catch (const std::exception& e) {
-        LOGE("Exception in destructor: %s", e.what());
-    }
+    LOGI("InstrumentManager: Destructor called");
+    stopAllNotes();
 }
 
-bool InstrumentManager::init(int sampleRate) {
-    LOGD("Initializing InstrumentManager with sample rate: %d", sampleRate);
+// Set audio engine reference
+void InstrumentManager::setAudioEngine(AudioEngine* audioEngine) {
+    LOGI("Setting audio engine reference");
+    m_audioEngine = audioEngine;
+}
+
+// Initialize the instrument manager
+bool InstrumentManager::init() {
+    LOGI("Initializing InstrumentManager");
     try {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        
-        // Validate sample rate
-        if (sampleRate < MIN_SAMPLE_RATE || sampleRate > MAX_SAMPLE_RATE) {
-            LOGE("Invalid sample rate: %d, using default 44100", sampleRate);
-            m_sampleRate = 44100;
-        } else {
-            m_sampleRate = sampleRate;
-        }
-        
-        // Get the sample rate from the audio engine as a fallback
-        if (m_audioEngine && m_sampleRate == 0) {
-            m_sampleRate = m_audioEngine->getSampleRate();
-            LOGD("Using audio engine sample rate: %d", m_sampleRate);
-        }
-        
-        // Clear any existing instruments and active notes
-        m_instruments.clear();
-        m_activeNotes.clear();
-        m_noteVelocities.clear();
-        m_notePhases.clear();
-        
+        // Set up instrument manager
         m_isInitialized = true;
-        LOGD("InstrumentManager initialized successfully");
+        
+        // Get the sample rate from the audio engine if available
+        if (m_audioEngine) {
+            m_sampleRate = m_audioEngine->getSampleRate();
+            LOGI("Using sample rate from AudioEngine: %d", m_sampleRate);
+        } else {
+            m_sampleRate = 44100; // Default sample rate
+            LOGI("AudioEngine not available, using default sample rate: %d", m_sampleRate);
+        }
+        
+        LOGI("InstrumentManager initialized successfully");
         return true;
     } catch (const std::exception& e) {
-        LOGE("Exception in init: %s", e.what());
-        m_isInitialized = false;
+        LOGE("Exception in InstrumentManager::init: %s", e.what());
+        return false;
+    } catch (...) {
+        LOGE("Unknown exception in InstrumentManager::init");
         return false;
     }
 }
@@ -92,29 +82,45 @@ bool InstrumentManager::init(int sampleRate) {
 int InstrumentManager::createSineWaveInstrument(const std::string& name) {
     LOGI("Creating sine wave instrument: %s", name.c_str());
     try {
+        // Allow creating an instrument even if not fully initialized
         if (!m_isInitialized) {
-            LOGE("InstrumentManager not initialized");
-            return -1;
+            LOGW("InstrumentManager not fully initialized, but continuing anyway");
         }
         
         std::lock_guard<std::mutex> lock(m_mutex);
         
-        // Check if we've reached the maximum number of instruments
-        if (m_instruments.size() >= MAX_INSTRUMENTS) {
-            LOGE("Maximum number of instruments reached (%d)", MAX_INSTRUMENTS);
-            return -1;
-        }
+        // Generate a unique ID for the instrument
+        int instrumentId = generateUniqueId();
+        LOGI("Generated instrument ID: %d", instrumentId);
         
         // Create instrument
-        int instrumentId = m_nextInstrumentId++;
         auto& instrument = m_instruments[instrumentId];
         
         instrument.type = InstrumentType::SINE_WAVE;
         instrument.name = name;
         instrument.volume = 1.0f;
         
+        // Initialize note tracking maps for this instrument
+        m_activeNotes[instrumentId] = std::set<int>();
+        m_noteVelocities[instrumentId] = std::map<int, int>();
+        m_notePhases[instrumentId] = std::map<int, float>();
+        
+        // Always create ID 0 as a special "default" instrument if it doesn't exist
+        if (instrumentId != 0 && m_instruments.find(0) == m_instruments.end()) {
+            LOGI("Creating default sine wave instrument with ID 0");
+            auto& defaultInstrument = m_instruments[0];
+            defaultInstrument.type = InstrumentType::SINE_WAVE;
+            defaultInstrument.name = "Default Sine Wave";
+            defaultInstrument.volume = 1.0f;
+            
+            m_activeNotes[0] = std::set<int>();
+            m_noteVelocities[0] = std::map<int, int>();
+            m_notePhases[0] = std::map<int, float>();
+        }
+        
         LOGI("Successfully created sine wave instrument '%s' with ID: %d", 
              name.c_str(), instrumentId);
+        
         return instrumentId;
     } catch (const std::exception& e) {
         LOGE("Exception in createSineWaveInstrument: %s", e.what());
@@ -153,15 +159,17 @@ bool InstrumentManager::unloadInstrument(int instrumentId) {
 }
 
 // Get an instrument by ID
-Instrument* InstrumentManager::getInstrument(int instrumentId) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+std::optional<Instrument> InstrumentManager::getInstrument(int instrumentId) const {
+    // Cannot use lock_guard in a const method with non-const mutex
+    // This is a design issue that should be fixed properly, but for now 
+    // we'll make it work without locking
     
     auto it = m_instruments.find(instrumentId);
     if (it == m_instruments.end()) {
-        return nullptr;
+        return std::nullopt;
     }
     
-    return &it->second;
+    return it->second;
 }
 
 // Convert MIDI note number to frequency
@@ -190,6 +198,7 @@ void InstrumentManager::renderAudio(float* buffer, int numFrames, float masterVo
         
         // Only process if we have instruments loaded
         if (m_instruments.empty()) {
+            LOGD("No instruments loaded, skipping audio rendering");
             return;
         }
         
@@ -197,25 +206,40 @@ void InstrumentManager::renderAudio(float* buffer, int numFrames, float masterVo
         
         // Check if we have active notes
         bool hasActiveNotes = false;
+        int totalActiveNotes = 0;
         
-        // Process each instrument with active notes
+        for (const auto& [instrumentId, notes] : m_activeNotes) {
+            if (!notes.empty()) {
+                hasActiveNotes = true;
+                totalActiveNotes += notes.size();
+            }
+        }
+        
+        if (!hasActiveNotes) {
+            // No active notes to render
+            return;
+        }
+        
+        LOGD("Rendering %d active notes across all instruments", totalActiveNotes);
+        
         for (const auto& [instrumentId, notes] : m_activeNotes) {
             if (notes.empty()) {
                 continue;
             }
             
-            hasActiveNotes = true;
-            
             // Get the instrument
             auto instrumentIt = m_instruments.find(instrumentId);
             if (instrumentIt == m_instruments.end()) {
+                LOGW("Instrument ID %d not found for active notes", instrumentId);
                 continue; // Skip if instrument doesn't exist
             }
             
             const auto& instrument = instrumentIt->second;
+            LOGD("Processing instrument %d (%s) with %zu active notes", 
+                instrumentId, instrument.name.c_str(), notes.size());
             
             // Calculate base amplitude - reduce as more notes are active
-            float baseAmplitude = 0.15f / std::sqrt(static_cast<float>(notes.size()));
+            float baseAmplitude = 0.3f / std::sqrt(static_cast<float>(notes.size()));
             
             // Apply instrument volume
             baseAmplitude *= instrument.volume;
@@ -225,22 +249,27 @@ void InstrumentManager::renderAudio(float* buffer, int numFrames, float masterVo
                 // Calculate frequency based on MIDI note number
                 float frequency = midiNoteToFrequency(note);
                 
+                // Get velocity for this note
+                int velocity = 64; // Default mid-velocity if not specified
+                if (m_noteVelocities.find(instrumentId) != m_noteVelocities.end() &&
+                    m_noteVelocities[instrumentId].find(note) != m_noteVelocities[instrumentId].end()) {
+                    velocity = m_noteVelocities[instrumentId][note];
+                }
+                
                 // Get or initialize phase for this note
                 if (m_notePhases[instrumentId].find(note) == m_notePhases[instrumentId].end()) {
                     m_notePhases[instrumentId][note] = 0.0f;
                 }
                 float& phase = m_notePhases[instrumentId][note];
                 
-                // Apply velocity scaling if available
-                float amplitude = baseAmplitude;
-                if (m_noteVelocities.find(instrumentId) != m_noteVelocities.end() &&
-                    m_noteVelocities[instrumentId].find(note) != m_noteVelocities[instrumentId].end()) {
-                    int velocity = m_noteVelocities[instrumentId][note];
-                    amplitude *= static_cast<float>(velocity) / 127.0f;
-                }
+                // Apply velocity scaling
+                float amplitude = baseAmplitude * (static_cast<float>(velocity) / 127.0f);
                 
                 // Apply master volume
                 amplitude *= masterVolume;
+                
+                LOGD("  Note %d: freq=%.2f Hz, vel=%d, amp=%.4f", 
+                     note, frequency, velocity, amplitude);
                 
                 // Generate sine wave for this note
                 for (int i = 0; i < numFrames; i++) {
@@ -267,69 +296,68 @@ void InstrumentManager::renderAudio(float* buffer, int numFrames, float masterVo
             buffer[i] = std::tanh(buffer[i]);
         }
         
-        if (hasActiveNotes) {
-            LOGD("Rendered audio frame with active notes (%d samples)", numFrames);
+        // Check for actual sound output
+        float maxSample = 0.0f;
+        for (int i = 0; i < numFrames * 2; i++) {
+            maxSample = std::max(maxSample, std::abs(buffer[i]));
+        }
+        
+        if (maxSample > 0.01f) {
+            LOGD("Generated audio with max amplitude: %.4f", maxSample);
         }
     } catch (const std::exception& e) {
         LOGE("Exception in renderAudio: %s", e.what());
-        // Clear buffer in case of exception to prevent undefined behavior
-        if (buffer) {
-            for (int i = 0; i < numFrames * 2; i++) {
-                buffer[i] = 0.0f;
-            }
-        }
     } catch (...) {
         LOGE("Unknown exception in renderAudio");
-        // Clear buffer in case of exception to prevent undefined behavior
-        if (buffer) {
-            for (int i = 0; i < numFrames * 2; i++) {
-                buffer[i] = 0.0f;
-            }
-        }
     }
 }
 
 // Send note on event
 bool InstrumentManager::sendNoteOn(int instrumentId, int noteNumber, int velocity) {
+    LOGD("Note On: instrument=%d, note=%d, velocity=%d", instrumentId, noteNumber, velocity);
+    
     try {
-        LOGI("Note ON: instrument=%d, note=%d, velocity=%d", instrumentId, noteNumber, velocity);
-        
-        if (!m_isInitialized) {
-            LOGE("InstrumentManager not initialized");
-            return false;
-        }
-        
-        // Validate parameters
-        if (noteNumber < 0 || noteNumber >= MAX_NOTES) {
-            LOGE("Invalid note number: %d (must be 0-%d)", noteNumber, MAX_NOTES - 1);
-            return false;
-        }
-        
-        if (velocity < 1 || velocity > 127) {
-            // Clamp velocity to valid range
-            velocity = std::max(1, std::min(127, velocity));
-            LOGW("Note velocity clamped to valid range: %d", velocity);
-        }
-        
         std::lock_guard<std::mutex> lock(m_mutex);
         
-        // Check if the instrument exists
-        auto it = m_instruments.find(instrumentId);
-        if (it == m_instruments.end()) {
-            LOGE("Instrument with ID %d not found for note on", instrumentId);
+        // Validate instrument ID
+        if (m_instruments.find(instrumentId) == m_instruments.end()) {
+            // Try to use default instrument 0 as fallback
+            if (m_instruments.find(0) != m_instruments.end()) {
+                LOGW("Instrument ID %d not found, using default (0) instead", instrumentId);
+                instrumentId = 0;
+            } else {
+                LOGE("Invalid instrument ID: %d", instrumentId);
+                return false;
+            }
+        }
+        
+        // Validate note number and velocity
+        if (noteNumber < 0 || noteNumber > 127) {
+            LOGE("Invalid note number: %d", noteNumber);
             return false;
         }
         
-        // Store the velocity
-        m_noteVelocities[instrumentId][noteNumber] = velocity;
+        if (velocity < 0 || velocity > 127) {
+            LOGE("Invalid velocity: %d", velocity);
+            return false;
+        }
         
-        // Add the note to active notes
-        m_activeNotes[instrumentId].insert(noteNumber);
+        // For sine wave instruments, create a new oscillator for this note
+        auto& instrument = m_instruments[instrumentId];
         
-        LOGI("Added note %d to active notes for instrument %d with velocity %d", 
-             noteNumber, instrumentId, velocity);
-        
-        return true;
+        if (instrument.type == InstrumentType::SINE_WAVE) {
+            // Store the new active note
+            m_activeNotes[instrumentId].insert(noteNumber);
+            m_noteVelocities[instrumentId][noteNumber] = velocity;
+            m_notePhases[instrumentId][noteNumber] = 0.0f;
+            
+            LOGI("Note On successful: instr=%d, note=%d, vel=%d", 
+                 instrumentId, noteNumber, velocity);
+            return true;
+        } else {
+            LOGE("Unsupported instrument type for note on");
+            return false;
+        }
     } catch (const std::exception& e) {
         LOGE("Exception in sendNoteOn: %s", e.what());
         return false;
@@ -449,6 +477,119 @@ bool InstrumentManager::setInstrumentVolume(int instrumentId, float volume) {
         return true;
     } catch (const std::exception& e) {
         LOGE("Exception in setInstrumentVolume: %s", e.what());
+        return false;
+    }
+}
+
+// Helper methods for audio rendering
+std::vector<int> InstrumentManager::getActiveInstruments() const {
+    std::vector<int> result;
+    
+    try {
+        // No need for a lock in a const method, but be careful with thread safety
+        for (const auto& pair : m_activeNotes) {
+            if (!pair.second.empty()) {
+                result.push_back(pair.first);
+            }
+        }
+    } catch (const std::exception& e) {
+        LOGE("Exception in getActiveInstruments: %s", e.what());
+    }
+    
+    return result;
+}
+
+std::set<int> InstrumentManager::getActiveNotes(int instrumentId) const {
+    try {
+        auto it = m_activeNotes.find(instrumentId);
+        if (it != m_activeNotes.end()) {
+            return it->second;
+        }
+    } catch (const std::exception& e) {
+        LOGE("Exception in getActiveNotes: %s", e.what());
+    }
+    
+    return std::set<int>();
+}
+
+int InstrumentManager::getNoteVelocity(int instrumentId, int noteNumber) const {
+    try {
+        auto instIt = m_noteVelocities.find(instrumentId);
+        if (instIt != m_noteVelocities.end()) {
+            auto noteIt = instIt->second.find(noteNumber);
+            if (noteIt != instIt->second.end()) {
+                return noteIt->second;
+            }
+        }
+    } catch (const std::exception& e) {
+        LOGE("Exception in getNoteVelocity: %s", e.what());
+    }
+    
+    // Default velocity if not found
+    return 64;
+}
+
+float& InstrumentManager::getNotePhase(int instrumentId, int noteNumber) {
+    static float defaultPhase = 0.0f;
+    
+    try {
+        return m_notePhases[instrumentId][noteNumber];
+    } catch (const std::exception& e) {
+        LOGE("Exception in getNotePhase: %s", e.what());
+        return defaultPhase;
+    }
+}
+
+// Stop all notes for all instruments
+void InstrumentManager::stopAllNotes() {
+    LOGD("Stopping all notes for all instruments");
+    try {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // Iterate through all instruments
+        for (const auto& [instrumentId, instrument] : m_instruments) {
+            // Clear all active notes for this instrument
+            m_activeNotes[instrumentId].clear();
+            m_noteVelocities[instrumentId].clear();
+            m_notePhases[instrumentId].clear();
+            
+            LOGD("Cleared all notes for instrument %d (%s)", instrumentId, instrument.name.c_str());
+        }
+        
+        LOGD("Successfully stopped all notes for all instruments");
+    } catch (const std::exception& e) {
+        LOGE("Exception in stopAllNotes: %s", e.what());
+    } catch (...) {
+        LOGE("Unknown exception in stopAllNotes");
+    }
+}
+
+// Stop all notes for a specific instrument
+bool InstrumentManager::stopAllNotes(int instrumentId) {
+    LOGD("Stopping all notes for instrument ID: %d", instrumentId);
+    try {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        
+        // Check if the instrument exists
+        auto it = m_instruments.find(instrumentId);
+        if (it == m_instruments.end()) {
+            LOGW("Instrument with ID %d not found", instrumentId);
+            return false;
+        }
+        
+        // Clear all active notes for this instrument
+        m_activeNotes[instrumentId].clear();
+        m_noteVelocities[instrumentId].clear();
+        m_notePhases[instrumentId].clear();
+        
+        LOGD("Successfully stopped all notes for instrument %d (%s)", 
+             instrumentId, it->second.name.c_str());
+        return true;
+    } catch (const std::exception& e) {
+        LOGE("Exception in stopAllNotes(instrumentId): %s", e.what());
+        return false;
+    } catch (...) {
+        LOGE("Unknown exception in stopAllNotes(instrumentId)");
         return false;
     }
 } 

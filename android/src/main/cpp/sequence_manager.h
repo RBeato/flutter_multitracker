@@ -9,6 +9,7 @@
 #include <string>
 
 class InstrumentManager;
+class AudioEngine;
 
 // Structure to represent a note
 struct Note {
@@ -38,6 +39,7 @@ struct Sequence {
 class SequenceManager {
 public:
     explicit SequenceManager(InstrumentManager* instrumentManager);
+    SequenceManager(AudioEngine* audioEngine, InstrumentManager* instrumentManager);
     ~SequenceManager();
 
     // Initialize the sequence manager

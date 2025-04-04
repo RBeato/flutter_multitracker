@@ -19,10 +19,10 @@ class Instrument {
   final InstrumentType type;
   
   /// The path to the instrument file (SFZ, SF2) or component description (AudioUnit)
-  final String path;
+  final String? path;
   
   /// The name of the instrument (if available)
-  final String? name;
+  final String name;
   
   /// For SF2 instruments, the preset number
   final int? preset;
@@ -34,14 +34,14 @@ class Instrument {
   const Instrument({
     required this.id,
     required this.type,
-    required this.path,
-    this.name,
+    required this.name,
+    this.path,
     this.preset,
     this.bank,
   });
 
   @override
   String toString() {
-    return 'Instrument(id: $id, type: $type, name: ${name ?? "unknown"})';
+    return 'Instrument(id: $id, type: $type, name: $name)';
   }
 } 

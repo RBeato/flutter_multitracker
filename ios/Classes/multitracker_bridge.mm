@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #include "FlutterMultitrackerPlugin-Bridging-Header.h"
+#import <os/log.h>
 
 // Include C++ headers
 #include <memory>
@@ -20,37 +21,52 @@ class Track;
 
 // Global instances
 static std::unique_ptr<AudioEngine> audioEngine;
+static AVAudioEngine* audioEngineObj;
+static AVAudioMixerNode* mixerNode;
+static float masterVolume = 1.0;
+static NSMutableDictionary<NSNumber*, id>* instruments;
+static NSMutableDictionary<NSNumber*, id>* sequences;
+static NSMutableDictionary<NSNumber*, id>* tracks;
+static int nextInstrumentId = 1;
+static int nextSequenceId = 1;
+static int nextTrackId = 1;
+static BOOL isInitialized = NO;
+static int64_t dartPort = 0;
 
 // Audio engine class for iOS
 class AudioEngine {
 public:
-    AudioEngine();
-    ~AudioEngine();
-    
-    bool init(int sampleRate, int framesPerBuffer);
-    bool start();
-    bool stop();
-    
-    int getSampleRate() const { return m_sampleRate; }
-    void setMasterVolume(float volume);
-    
-    InstrumentManager* getInstrumentManager() { return m_instrumentManager.get(); }
-    SequenceManager* getSequenceManager() { return m_sequenceManager.get(); }
-    
-private:
-    std::unique_ptr<InstrumentManager> m_instrumentManager;
-    std::unique_ptr<SequenceManager> m_sequenceManager;
-    
-    int m_sampleRate;
-    int m_framesPerBuffer;
-    float m_masterVolume;
-    
     AVAudioEngine* m_avAudioEngine;
-    AVAudioSourceNode* m_sourceNode;
-    std::mutex m_mutex;
+    AVAudioMixerNode* m_mixerNode;
     
-    // Audio processing callback
-    void processBuffer(float* buffer, int frameCount);
+    AudioEngine() {
+        m_avAudioEngine = [[AVAudioEngine alloc] init];
+        m_mixerNode = m_avAudioEngine.mainMixerNode;
+    }
+    
+    ~AudioEngine() {
+        [m_avAudioEngine stop];
+    }
+    
+    bool start() {
+        NSError* error = nil;
+        [m_avAudioEngine startAndReturnError:&error];
+        if (error) {
+            os_log_error(OS_LOG_DEFAULT, "Failed to start audio engine: %{public}@", error.localizedDescription);
+            return false;
+        }
+        return true;
+    }
+    
+    bool stop() {
+        [m_avAudioEngine stop];
+        return true;
+    }
+    
+    SequenceManager* getSequenceManager() {
+        // To be implemented
+        return nullptr;
+    }
 };
 
 // Instrument class
@@ -763,10 +779,46 @@ void SequenceManager::processActiveNotes(double positionInBeats, double previous
 // C function implementations for bridging
 
 bool initAudioEngine(int sampleRate, int framesPerBuffer) {
-    if (!audioEngine) {
+    @autoreleasepool {
+        os_log_info(OS_LOG_DEFAULT, "Initializing audio engine with sample rate: %d, frames per buffer: %d", sampleRate, framesPerBuffer);
+        
+        if (isInitialized) {
+            os_log_info(OS_LOG_DEFAULT, "Audio engine already initialized");
+            return true;
+        }
+        
+        // Initialize the audio engine
         audioEngine = std::make_unique<AudioEngine>();
+        audioEngineObj = audioEngine->m_avAudioEngine;
+        
+        // Configure audio session for playback
+        NSError* error = nil;
+        AVAudioSession* session = [AVAudioSession sharedInstance];
+        [session setCategory:AVAudioSessionCategoryPlayback error:&error];
+        if (error) {
+            os_log_error(OS_LOG_DEFAULT, "Failed to set audio session category: %{public}@", error.localizedDescription);
+            return false;
+        }
+        
+        [session setActive:YES error:&error];
+        if (error) {
+            os_log_error(OS_LOG_DEFAULT, "Failed to activate audio session: %{public}@", error.localizedDescription);
+            return false;
+        }
+        
+        // Set up mixer node
+        mixerNode = audioEngineObj.mainMixerNode;
+        mixerNode.outputVolume = masterVolume;
+        
+        // Initialize dictionaries
+        instruments = [NSMutableDictionary dictionary];
+        sequences = [NSMutableDictionary dictionary];
+        tracks = [NSMutableDictionary dictionary];
+        
+        isInitialized = YES;
+        os_log_info(OS_LOG_DEFAULT, "Audio engine initialized successfully");
+        return true;
     }
-    return audioEngine->init(sampleRate, framesPerBuffer);
 }
 
 bool startAudioEngine() {
@@ -927,5 +979,41 @@ bool setLooping(int sequenceId, bool isLooping) {
         return false;
     }
     audioEngine->getSequenceManager()->setLooping(sequenceId, isLooping);
+    return true;
+}
+
+// Dart callback port handling
+void* registerDartCallbackPort(int64_t port) {
+    os_log_info(OS_LOG_DEFAULT, "Registering Dart callback port: %lld", port);
+    dartPort = port;
+    return (void*)1; // Return non-null pointer to indicate success
+}
+
+// MIDI note functions
+bool sendNoteOn(int instrumentId, int noteNumber, int velocity) {
+    if (!isInitialized) {
+        os_log_error(OS_LOG_DEFAULT, "Audio engine not initialized");
+        return false;
+    }
+    
+    os_log_info(OS_LOG_DEFAULT, "Sending note on: instrument=%d, note=%d, velocity=%d", 
+                instrumentId, noteNumber, velocity);
+    
+    // For now, just return success
+    // TODO: Implement actual MIDI note handling
+    return true;
+}
+
+bool sendNoteOff(int instrumentId, int noteNumber) {
+    if (!isInitialized) {
+        os_log_error(OS_LOG_DEFAULT, "Audio engine not initialized");
+        return false;
+    }
+    
+    os_log_info(OS_LOG_DEFAULT, "Sending note off: instrument=%d, note=%d", 
+                instrumentId, noteNumber);
+    
+    // For now, just return success
+    // TODO: Implement actual MIDI note handling
     return true;
 } 

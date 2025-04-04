@@ -27,9 +27,9 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   Track? _selectedTrack;
   late Ticker _ticker;
   
-  // Instrument IDs
-  int? _drumInstrumentId;
-  int? _melodyInstrumentId;
+  // Instrument objects
+  Instrument? _drumInstrument;
+  Instrument? _melodyInstrument;
   
   // Playback state
   double _tempo = 120.0;
@@ -59,16 +59,15 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   void initState() {
     super.initState();
     
-    // Use instrument IDs from parent if provided
-    _drumInstrumentId = widget.drumInstrumentId;
-    _melodyInstrumentId = widget.melodyInstrumentId;
-    
-    if (_drumInstrumentId != null) {
-      debugPrint('Using drum instrument ID from parent: $_drumInstrumentId');
+    // Get instruments from parent if provided
+    if (widget.drumInstrumentId != null) {
+      _drumInstrument = _multitracker.getInstrument(widget.drumInstrumentId!);
+      debugPrint('Using drum instrument from parent: $_drumInstrument');
     }
     
-    if (_melodyInstrumentId != null) {
-      debugPrint('Using melody instrument ID from parent: $_melodyInstrumentId');
+    if (widget.melodyInstrumentId != null) {
+      _melodyInstrument = _multitracker.getInstrument(widget.melodyInstrumentId!);
+      debugPrint('Using melody instrument from parent: $_melodyInstrument');
     }
     
     _initSequencer();
@@ -103,12 +102,6 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
         
         debugPrint('Created sequence with ID: ${sequence.id}');
         
-        // Set loop
-        if (_isLooping) {
-          await _multitracker.setLoop(sequence.id, 0, _stepCount.toDouble());
-          debugPrint('Set loop from 0 to $_stepCount');
-        }
-        
         // Create instruments and tracks
         await _createTracks();
       } else {
@@ -141,24 +134,21 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   }
   
   Future<void> _createDrumTrack() async {
-    // Skip if we already have a drum instrument ID from parent
-    if (_drumInstrumentId == null) {
+    // Skip if we already have a drum instrument from parent
+    if (_drumInstrument == null) {
       // Try to load the TR-808 SF2 instrument
-      Instrument? drumInstrument;
-      
       try {
         debugPrint('Attempting to load TR-808 SF2 instrument...');
         // First try to load from SF2
-        drumInstrument = await _multitracker.loadInstrumentFromSF2(
-          sf2Path: 'assets/sf2/TR-808.sf2',
-          isAsset: true,
-          preset: 0,
-          bank: 0,
+        _drumInstrument = await _multitracker.loadSF2(
+          'assets/sf2/TR-808.sf2',
+          0,
+          0,
+          name: 'TR-808 Drums'
         );
         
-        if (drumInstrument != null) {
-          _drumInstrumentId = drumInstrument.id;
-          debugPrint('Successfully loaded TR-808 SF2 instrument with ID: ${drumInstrument.id}');
+        if (_drumInstrument != null) {
+          debugPrint('Successfully loaded TR-808 SF2 instrument with ID: ${_drumInstrument!.id}');
         } else {
           debugPrint('Failed to load SF2 instrument, result was null');
         }
@@ -167,41 +157,23 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
       }
       
       // Fallback to creating a sample-based instrument if SF2 loading failed
-      if (drumInstrument == null) {
-        debugPrint('Creating sample-based drum instrument as fallback...');
-        drumInstrument = await _multitracker.createInstrument('TR-808 Drums', 'sample');
+      if (_drumInstrument == null) {
+        debugPrint('Creating SFZ drum instrument as fallback...');
+        _drumInstrument = await _multitracker.loadSFZ('assets/sfz/drums.sfz', name: 'TR-808 Drums');
         
-        if (drumInstrument != null) {
-          _drumInstrumentId = drumInstrument.id;
-          debugPrint('Created sample-based drum instrument with ID: ${drumInstrument.id}');
+        if (_drumInstrument != null) {
+          debugPrint('Created SFZ drum instrument with ID: ${_drumInstrument!.id}');
         } else {
-          debugPrint('Failed to create sample-based drum instrument');
+          debugPrint('Failed to create SFZ drum instrument');
         }
       }
-      
-      // Set envelope parameters for drums
-      if (_drumInstrumentId != null) {
-        await _multitracker.setInstrumentEnvelope(
-          _drumInstrumentId!,
-          0.001,  // Very short attack
-          0.01,   // Shorter decay
-          0.3,    // Lower sustain level
-          0.05,   // Very short release
-        );
-        
-        debugPrint('Set envelope parameters for drum instrument $_drumInstrumentId');
-      }
     } else {
-      debugPrint('Using drum instrument ID from parent: $_drumInstrumentId');
+      debugPrint('Using drum instrument from parent: $_drumInstrument');
     }
     
     // Create a track for drums if we have a drum instrument
-    if (_drumInstrumentId != null) {
-      final drumTrack = await _multitracker.addTrack(
-        _sequence!.id,
-        _drumInstrumentId!,
-        'Drums',
-      );
+    if (_drumInstrument != null && _sequence != null) {
+      final drumTrack = await _multitracker.addTrack(_sequence!, _drumInstrument!);
       
       if (drumTrack != null) {
         debugPrint('Created drum track with ID: ${drumTrack.id}');
@@ -226,40 +198,24 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   }
   
   Future<void> _createMelodyTrack() async {
-    // Skip if we already have a melody instrument ID from parent
-    if (_melodyInstrumentId == null) {
-      // Create a sine wave instrument
+    // Skip if we already have a melody instrument from parent
+    if (_melodyInstrument == null) {
+      // Create a sine wave instrument (use SFZ with sine wave)
       debugPrint('Creating sine wave instrument for melody...');
-      final sineInstrument = await _multitracker.createInstrument('Sine Wave', 'sine');
+      _melodyInstrument = await _multitracker.loadSFZ('assets/sfz/sine.sfz', name: 'Sine Wave');
       
-      if (sineInstrument != null) {
-        _melodyInstrumentId = sineInstrument.id;
-        debugPrint('Created sine wave instrument with ID: ${sineInstrument.id}');
-        
-        // Set envelope parameters
-        await _multitracker.setInstrumentEnvelope(
-          sineInstrument.id,
-          0.01,
-          0.1,
-          0.7,
-          0.3,
-        );
-        
-        debugPrint('Set envelope parameters for sine wave instrument ${sineInstrument.id}');
+      if (_melodyInstrument != null) {
+        debugPrint('Created sine wave instrument with ID: ${_melodyInstrument!.id}');
       } else {
         debugPrint('Failed to create sine wave instrument');
       }
     } else {
-      debugPrint('Using melody instrument ID from parent: $_melodyInstrumentId');
+      debugPrint('Using melody instrument from parent: $_melodyInstrument');
     }
     
     // Create a track for melody if we have a melody instrument
-    if (_melodyInstrumentId != null) {
-      final melodyTrack = await _multitracker.addTrack(
-        _sequence!.id,
-        _melodyInstrumentId!,
-        'Melody',
-      );
+    if (_melodyInstrument != null && _sequence != null) {
+      final melodyTrack = await _multitracker.addTrack(_sequence!, _melodyInstrument!);
       
       if (melodyTrack != null) {
         debugPrint('Created melody track with ID: ${melodyTrack.id}');
@@ -288,8 +244,10 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   Future<void> _updatePosition() async {
     if (_sequence != null) {
       try {
-        final position = await _multitracker.getPosition(_sequence!.id);
-        final isPlaying = await _multitracker.getIsPlaying(_sequence!.id);
+        final position = await _multitracker.getPlaybackPosition(_sequence!);
+        
+        // Check if sequence is playing by comparing consecutive positions
+        final isPlaying = position > _position || (position < _position && _isLooping);
         
         setState(() {
           _position = position;
@@ -306,9 +264,9 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
     
     try {
       if (_isPlaying) {
-        await _multitracker.stopPlayback(_sequence!.id);
+        await _multitracker.stopSequence(_sequence!);
       } else {
-        await _multitracker.startPlayback(_sequence!.id);
+        await _multitracker.playSequence(_sequence!, loop: _isLooping);
       }
       
       setState(() {
@@ -323,8 +281,8 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
     if (_sequence == null) return;
     
     try {
-      await _multitracker.stopPlayback(_sequence!.id);
-      await _multitracker.setBeat(_sequence!.id, 0);
+      await _multitracker.stopSequence(_sequence!);
+      await _multitracker.setPlaybackPosition(_sequence!, 0);
       
       setState(() {
         _isPlaying = false;
@@ -338,54 +296,26 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   Future<void> _toggleLoop() async {
     if (_sequence == null) return;
     
-    try {
-      if (_isLooping) {
-        await _multitracker.unsetLoop(_sequence!.id);
-      } else {
-        await _multitracker.setLoop(_sequence!.id, 0, _stepCount.toDouble());
-      }
-      
-      setState(() {
-        _isLooping = !_isLooping;
-      });
-    } catch (e) {
-      debugPrint('Error toggling loop: $e');
-    }
+    setState(() {
+      _isLooping = !_isLooping;
+    });
   }
   
   Future<void> _setTempo(double tempo) async {
-    if (_sequence == null) return;
-    
-    try {
-      await _multitracker.setTempo(_sequence!.id, tempo);
-      
-      setState(() {
-        _tempo = tempo;
-      });
-    } catch (e) {
-      debugPrint('Error setting tempo: $e');
-    }
+    setState(() {
+      _tempo = tempo;
+    });
   }
   
   Future<void> _setStepCount(int count) async {
     if (_sequence == null || count < 1) return;
     
-    try {
-      await _multitracker.setEndBeat(_sequence!.id, count.toDouble());
-      
-      if (_isLooping) {
-        await _multitracker.setLoop(_sequence!.id, 0, count.toDouble());
-      }
-      
-      setState(() {
-        _stepCount = count;
-      });
-      
-      // Update all tracks with new step count
-      _syncAllTracks();
-    } catch (e) {
-      debugPrint('Error setting step count: $e');
-    }
+    setState(() {
+      _stepCount = count;
+    });
+    
+    // Update all tracks with new step count
+    _syncAllTracks();
   }
   
   Future<void> _syncAllTracks() async {
@@ -400,28 +330,61 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
     if (_sequence == null) return;
     
     try {
-      // Clear all notes from the track
-      // This is a simplification - in a real app, you'd want to be more selective
-      // about which notes to clear and which to keep
-      
-      // Add notes based on step velocities
-      final stepVelocities = _trackStepVelocities[track.id];
-      if (stepVelocities != null) {
-        for (final noteNumber in stepVelocities.keys) {
-          for (final step in stepVelocities[noteNumber]!.keys) {
-            if (step < _stepCount) {
-              final velocity = stepVelocities[noteNumber]![step]!;
-              
-              await _multitracker.addNote(
-                _sequence!.id,
-                track.id,
-                noteNumber,
-                (velocity * 127).toInt(),
-                step.toDouble(),
-                1.0, // Duration of 1 beat
-              );
+      // We need to recreate the sequence since our API doesn't support
+      // updating existing sequences directly
+      if (_sequence != null) {
+        await _multitracker.stopSequence(_sequence!);
+        
+        // Create a new sequence with the same tempo
+        final newSequence = await _multitracker.createSequence(_tempo);
+        if (newSequence != null) {
+          // Add all tracks to the new sequence
+          final Map<int, Track> newTracks = {};
+          
+          for (final oldTrack in _tracks) {
+            final instrument = _multitracker.getInstrument(oldTrack.instrumentId);
+            if (instrument != null) {
+              final newTrack = await _multitracker.addTrack(newSequence, instrument);
+              if (newTrack != null) {
+                newTracks[oldTrack.id] = newTrack;
+              }
             }
           }
+          
+          // Add all notes from step velocities
+          for (final oldTrackId in _trackStepVelocities.keys) {
+            final newTrack = newTracks[oldTrackId];
+            if (newTrack != null) {
+              final stepVelocities = _trackStepVelocities[oldTrackId];
+              if (stepVelocities != null) {
+                for (final noteNumber in stepVelocities.keys) {
+                  for (final step in stepVelocities[noteNumber]!.keys) {
+                    if (step < _stepCount) {
+                      final velocity = stepVelocities[noteNumber]![step]!;
+                      
+                      await _multitracker.addNote(
+                        newTrack,
+                        noteNumber,
+                        (velocity * 127).toInt(),
+                        step.toDouble(),
+                        1.0, // Duration of 1 beat
+                      );
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          // Update the UI state
+          setState(() {
+            _sequence = newSequence;
+            _tracks = newTracks.values.toList();
+            _selectedTrack = _tracks.firstWhere(
+              (t) => t.instrumentId == track.instrumentId,
+              orElse: () => _tracks.isNotEmpty ? _tracks.first : track,
+            );
+          });
         }
       }
     } catch (e) {
@@ -531,8 +494,8 @@ class _SequencerDemoState extends State<SequencerDemo> with SingleTickerProvider
   Future<void> _cleanup() async {
     if (_sequence != null) {
       try {
-        await _multitracker.stopPlayback(_sequence!.id);
-        await _multitracker.deleteSequence(_sequence!.id);
+        await _multitracker.stopSequence(_sequence!);
+        await _multitracker.dispose();
       } catch (e) {
         debugPrint('Error cleaning up sequence: $e');
       }

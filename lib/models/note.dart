@@ -1,23 +1,23 @@
-/// Represents a note event in a sequence track
+/// Represents a MIDI note in a track
 class Note {
-  /// The unique ID of the note (used for editing/removing the note)
-  final int id;
+  /// The ID of the track this note belongs to
+  final int? trackId;
   
-  /// The MIDI note number (0-127)
+  /// MIDI note number (0-127)
   final int noteNumber;
   
-  /// The MIDI velocity value (0-127)
+  /// Velocity (0-127)
   final int velocity;
   
-  /// The beat position where the note starts
+  /// Starting position in beats
   final double startBeat;
   
-  /// The duration of the note in beats
+  /// Duration in beats
   final double durationBeats;
 
-  /// Creates a new Note instance
-  const Note({
-    required this.id,
+  /// Creates a new note
+  Note({
+    this.trackId,
     required this.noteNumber,
     required this.velocity,
     required this.startBeat,
@@ -29,6 +29,7 @@ class Note {
 
   @override
   String toString() {
-    return 'Note(id: $id, noteNumber: $noteNumber, velocity: $velocity, startBeat: $startBeat, durationBeats: $durationBeats)';
+    final trackInfo = trackId != null ? 'trackId: $trackId, ' : '';
+    return 'Note{${trackInfo}note: $noteNumber, velocity: $velocity, start: $startBeat, duration: $durationBeats}';
   }
 } 

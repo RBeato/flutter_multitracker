@@ -1,8 +1,8 @@
 group = "com.example.flutter_multitracker"
-version = "1.0"
+version = "1.0-SNAPSHOT"
 
 buildscript {
-    ext.kotlin_version = "1.8.22"
+    ext.kotlin_version = "1.9.0"
     repositories {
         google()
         mavenCentral()
@@ -14,7 +14,7 @@ buildscript {
     }
 }
 
-allprojects {
+rootProject.allprojects {
     repositories {
         google()
         mavenCentral()
@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 
 android {
-    namespace = "com.example.flutter_multitracker"
+    namespace 'com.example.flutter_multitracker'
     
     // Add NDK version to match the example app
     ndkVersion "27.0.12077973"
@@ -33,21 +33,22 @@ android {
     compileSdkVersion 33
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11
+        jvmTarget = '1.8'
     }
 
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
+        main.jniLibs.srcDirs = ['src/main/jniLibs']
         test.java.srcDirs += "src/test/kotlin"
     }
 
     defaultConfig {
-        minSdkVersion 21
+        minSdkVersion 23
         
         // Enable C++ with CMake
         externalNativeBuild {
@@ -84,6 +85,13 @@ android {
                outputs.upToDateWhen {false}
                showStandardStreams = true
             }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }

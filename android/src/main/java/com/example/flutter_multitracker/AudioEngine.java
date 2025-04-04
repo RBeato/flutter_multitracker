@@ -1145,7 +1145,7 @@ public class AudioEngine {
      */
     private short[] loadWavFile(java.io.File file) {
         try {
-            Log.i(TAG, "Loading WAV file: " + file.getAbsolutePath());
+            Log.i(TAG, "Loading WAV file: " + file.getAbsolutePath() + " (size: " + file.length() + " bytes)");
             java.io.FileInputStream fis = new java.io.FileInputStream(file);
             java.io.BufferedInputStream bis = new java.io.BufferedInputStream(fis);
             
@@ -1184,8 +1184,8 @@ public class AudioEngine {
             boolean foundData = false;
             
             while (!foundData) {
-                int bytesRead = bis.read(chunkHeader, 0, chunkHeader.length);
-                if (bytesRead < chunkHeader.length) {
+                int chunkBytesRead = bis.read(chunkHeader, 0, chunkHeader.length);
+                if (chunkBytesRead < chunkHeader.length) {
                     if (!foundFmt) {
                         Log.e(TAG, "Unexpected end of file before fmt chunk");
                         bis.close();
@@ -1276,20 +1276,20 @@ public class AudioEngine {
                         if (bitsPerSample == 16) {
                             // 16-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int monoBufferBytesRead = bis.read(buffer, 0, buffer.length);
                             
-                            if (bytesRead < buffer.length) {
-                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                            if (monoBufferBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + monoBufferBytesRead + " vs " + buffer.length);
                                 // Adjust the number of samples
-                                samplesPerChannel = bytesRead / 2;
+                                samplesPerChannel = monoBufferBytesRead / 2;
                                 sampleData = new short[samplesPerChannel];
                             }
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
                                 // Convert bytes to short (little endian)
-                                if (i * 2 + 1 < bytesRead) {
+                                if (i * 2 + 1 < monoBufferBytesRead) {
                                     sampleData[i] = (short)(((buffer[i * 2 + 1] & 0xFF) << 8) | (buffer[i * 2] & 0xFF));
-                                } else if (i * 2 < bytesRead) {
+                                } else if (i * 2 < monoBufferBytesRead) {
                                     // Handle odd number of bytes
                                     sampleData[i] = (short)(buffer[i * 2] & 0xFF);
                                 } else {
@@ -1300,19 +1300,47 @@ public class AudioEngine {
                         } else if (bitsPerSample == 8) {
                             // 8-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int mono8bitBytesRead = bis.read(buffer, 0, buffer.length);
                             
-                            if (bytesRead < buffer.length) {
-                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                            if (mono8bitBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + mono8bitBytesRead + " vs " + buffer.length);
                                 // Adjust the number of samples
-                                samplesPerChannel = bytesRead;
+                                samplesPerChannel = mono8bitBytesRead;
                                 sampleData = new short[samplesPerChannel];
                             }
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
-                                if (i < bytesRead) {
+                                if (i < mono8bitBytesRead) {
                                     // Convert 8-bit unsigned to 16-bit signed
                                     sampleData[i] = (short)(((buffer[i] & 0xFF) - 128) * 256);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 32) {
+                            // 32-bit float samples
+                            byte[] buffer = new byte[dataSize];
+                            int mono32bitBytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (mono32bitBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + mono32bitBytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = mono32bitBytesRead / 4;
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * 4 + 3 < mono32bitBytesRead) {
+                                    // Convert 4 bytes to float (little endian)
+                                    int intBits = ((buffer[i * 4 + 3] & 0xFF) << 24) | 
+                                                 ((buffer[i * 4 + 2] & 0xFF) << 16) | 
+                                                 ((buffer[i * 4 + 1] & 0xFF) << 8) | 
+                                                 (buffer[i * 4] & 0xFF);
+                                    
+                                    // Convert float to short (scale from -1.0,1.0 to -32768,32767)
+                                    float floatSample = Float.intBitsToFloat(intBits);
+                                    sampleData[i] = (short)(floatSample * 32767.0f);
                                 } else {
                                     // Pad with zeros if we run out of data
                                     sampleData[i] = 0;
@@ -1330,28 +1358,28 @@ public class AudioEngine {
                         if (bitsPerSample == 16) {
                             // 16-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int stereo16bitBytesRead = bis.read(buffer, 0, buffer.length);
                             
-                            if (bytesRead < buffer.length) {
-                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                            if (stereo16bitBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + stereo16bitBytesRead + " vs " + buffer.length);
                                 // Adjust the number of samples
-                                samplesPerChannel = bytesRead / 4;
+                                samplesPerChannel = stereo16bitBytesRead / 4;
                                 sampleData = new short[samplesPerChannel];
                             }
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
-                                if (i * 4 + 3 < bytesRead) {
+                                if (i * 4 + 3 < stereo16bitBytesRead) {
                                     // Convert bytes to short (little endian)
                                     short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
                                     short right = (short)(((buffer[i * 4 + 3] & 0xFF) << 8) | (buffer[i * 4 + 2] & 0xFF));
                                     
                                     // Average the channels
                                     sampleData[i] = (short)((left + right) / 2);
-                                } else if (i * 4 + 1 < bytesRead) {
+                                } else if (i * 4 + 1 < stereo16bitBytesRead) {
                                     // We have at least the left channel
                                     short left = (short)(((buffer[i * 4 + 1] & 0xFF) << 8) | (buffer[i * 4] & 0xFF));
                                     sampleData[i] = left;
-                                } else if (i * 4 < bytesRead) {
+                                } else if (i * 4 < stereo16bitBytesRead) {
                                     // Handle odd number of bytes
                                     sampleData[i] = (short)(buffer[i * 4] & 0xFF);
                                 } else {
@@ -1362,27 +1390,63 @@ public class AudioEngine {
                         } else if (bitsPerSample == 8) {
                             // 8-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int stereo8bitBytesRead = bis.read(buffer, 0, buffer.length);
                             
-                            if (bytesRead < buffer.length) {
-                                Log.w(TAG, "Read fewer bytes than expected: " + bytesRead + " vs " + buffer.length);
+                            if (stereo8bitBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + stereo8bitBytesRead + " vs " + buffer.length);
                                 // Adjust the number of samples
-                                samplesPerChannel = bytesRead / 2;
+                                samplesPerChannel = stereo8bitBytesRead / 2;
                                 sampleData = new short[samplesPerChannel];
                             }
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
-                                if (i * 2 + 1 < bytesRead) {
+                                if (i * 2 + 1 < stereo8bitBytesRead) {
                                     // Convert 8-bit unsigned to 16-bit signed and average channels
                                     short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
                                     short right = (short)(((buffer[i * 2 + 1] & 0xFF) - 128) * 256);
                                     
                                     // Average the channels
                                     sampleData[i] = (short)((left + right) / 2);
-                                } else if (i * 2 < bytesRead) {
+                                } else if (i * 2 < stereo8bitBytesRead) {
                                     // We have at least the left channel
                                     short left = (short)(((buffer[i * 2] & 0xFF) - 128) * 256);
                                     sampleData[i] = left;
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 32) {
+                            // 32-bit float samples (stereo)
+                            byte[] buffer = new byte[dataSize];
+                            int stereo32bitBytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            if (stereo32bitBytesRead < buffer.length) {
+                                Log.w(TAG, "Read fewer bytes than expected: " + stereo32bitBytesRead + " vs " + buffer.length);
+                                // Adjust the number of samples
+                                samplesPerChannel = stereo32bitBytesRead / 8; // 2 channels * 4 bytes per sample
+                                sampleData = new short[samplesPerChannel];
+                            }
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * 8 + 7 < stereo32bitBytesRead) {
+                                    // Convert bytes to float (little endian)
+                                    int leftIntBits = ((buffer[i * 8 + 3] & 0xFF) << 24) | 
+                                                     ((buffer[i * 8 + 2] & 0xFF) << 16) | 
+                                                     ((buffer[i * 8 + 1] & 0xFF) << 8) | 
+                                                     (buffer[i * 8] & 0xFF);
+                                    
+                                    int rightIntBits = ((buffer[i * 8 + 7] & 0xFF) << 24) | 
+                                                      ((buffer[i * 8 + 6] & 0xFF) << 16) | 
+                                                      ((buffer[i * 8 + 5] & 0xFF) << 8) | 
+                                                      (buffer[i * 8 + 4] & 0xFF);
+                                    
+                                    // Convert float to short
+                                    float leftFloat = Float.intBitsToFloat(leftIntBits);
+                                    float rightFloat = Float.intBitsToFloat(rightIntBits);
+                                    
+                                    // Average channels and convert to short
+                                    sampleData[i] = (short)(((leftFloat + rightFloat) / 2.0f) * 32767.0f);
                                 } else {
                                     // Pad with zeros if we run out of data
                                     sampleData[i] = 0;
@@ -1403,14 +1467,14 @@ public class AudioEngine {
                         if (bitsPerSample == 16) {
                             // 16-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int multiChannelBytesRead = bis.read(buffer, 0, buffer.length);
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
-                                if (i * bytesPerFrame + 1 < bytesRead) {
+                                if (i * bytesPerFrame + 1 < multiChannelBytesRead) {
                                     // Convert bytes to short (little endian) - first channel only
                                     sampleData[i] = (short)(((buffer[i * bytesPerFrame + 1] & 0xFF) << 8) | 
                                                            (buffer[i * bytesPerFrame] & 0xFF));
-                                } else if (i * bytesPerFrame < bytesRead) {
+                                } else if (i * bytesPerFrame < multiChannelBytesRead) {
                                     // Handle odd number of bytes
                                     sampleData[i] = (short)(buffer[i * bytesPerFrame] & 0xFF);
                                 } else {
@@ -1421,12 +1485,33 @@ public class AudioEngine {
                         } else if (bitsPerSample == 8) {
                             // 8-bit samples
                             byte[] buffer = new byte[dataSize];
-                            int bytesRead = bis.read(buffer, 0, buffer.length);
+                            int multiChannel8bitBytesRead = bis.read(buffer, 0, buffer.length);
                             
                             for (int i = 0; i < samplesPerChannel; i++) {
-                                if (i * bytesPerFrame < bytesRead) {
+                                if (i * bytesPerFrame < multiChannel8bitBytesRead) {
                                     // Convert 8-bit unsigned to 16-bit signed - first channel only
                                     sampleData[i] = (short)(((buffer[i * bytesPerFrame] & 0xFF) - 128) * 256);
+                                } else {
+                                    // Pad with zeros if we run out of data
+                                    sampleData[i] = 0;
+                                }
+                            }
+                        } else if (bitsPerSample == 32) {
+                            // 32-bit float samples (multi-channel)
+                            byte[] buffer = new byte[dataSize];
+                            int multiChannel32bitBytesRead = bis.read(buffer, 0, buffer.length);
+                            
+                            for (int i = 0; i < samplesPerChannel; i++) {
+                                if (i * bytesPerFrame + 3 < multiChannel32bitBytesRead) {
+                                    // Convert bytes to float (little endian) - first channel only
+                                    int intBits = ((buffer[i * bytesPerFrame + 3] & 0xFF) << 24) | 
+                                                 ((buffer[i * bytesPerFrame + 2] & 0xFF) << 16) | 
+                                                 ((buffer[i * bytesPerFrame + 1] & 0xFF) << 8) | 
+                                                 (buffer[i * bytesPerFrame] & 0xFF);
+                                    
+                                    // Convert float to short
+                                    float floatSample = Float.intBitsToFloat(intBits);
+                                    sampleData[i] = (short)(floatSample * 32767.0f);
                                 } else {
                                     // Pad with zeros if we run out of data
                                     sampleData[i] = 0;
@@ -1720,5 +1805,13 @@ public class AudioEngine {
         int sampleRate;
         int numChannels;
         int bitsPerSample;
+    }
+
+    /**
+     * Check if the audio engine is initialized.
+     * @return true if initialized, false otherwise
+     */
+    private boolean isInitialized() {
+        return isInitialized.get();
     }
 } 

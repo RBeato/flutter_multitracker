@@ -10,6 +10,8 @@ import io.flutter.plugin.common.MethodChannel.Result;
 
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.HashMap;
+import java.util.Map;
 import java.io.File;
 
 /** FlutterMultitrackerPlugin */
@@ -19,6 +21,8 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
   private AudioEngine audioEngine;
   private SequenceManager sequenceManager;
   private Timer sequenceTimer;
+  private boolean audioEngineInitialized = false;
+  private Map<Integer, Object> loadedInstruments = new HashMap<>();
   
   // Timer interval for processing sequence notes (in milliseconds)
   private static final int SEQUENCE_TIMER_INTERVAL = 20;
@@ -58,7 +62,7 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
           result.success(sendNoteOff(call, result));
           break;
         case "loadSample":
-          result.success(loadSample(call, result));
+          loadSample(call, result);
           break;
         case "loadInstrumentFromSF2":
           result.success(loadInstrumentFromSF2(call, result));
@@ -142,29 +146,67 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
         audioEngine = new AudioEngine();
       }
       
-      boolean success = audioEngine.init(44100);
-      if (success) {
-        // Start the audio engine
-        success = audioEngine.start();
-        if (success) {
-          // Create a default sine wave instrument with ID 0
-          createDefaultInstrument();
-          
-          // Initialize sequence manager
-          if (sequenceManager == null) {
-            sequenceManager = new SequenceManager(audioEngine);
-            sequenceManager.init();
-            
-            // Start sequence timer
-            startSequenceTimer();
+      // Add a timeout handler for initialization
+      final boolean[] initResult = new boolean[1];
+      final boolean[] initDone = new boolean[1];
+      
+      Thread initThread = new Thread(() -> {
+        try {
+          initResult[0] = audioEngine.init(44100);
+          if (initResult[0]) {
+            // Start the audio engine
+            initResult[0] = audioEngine.start();
           }
-          
-          Log.i(TAG, "Audio engine and sequence manager initialized successfully");
-        } else {
-          Log.e(TAG, "Failed to start audio engine");
+          initDone[0] = true;
+        } catch (Exception e) {
+          Log.e(TAG, "Exception in audio init thread: " + e.getMessage());
+          e.printStackTrace();
+          initResult[0] = false;
+          initDone[0] = true;
         }
+      });
+      
+      // Start initialization in background thread
+      initThread.start();
+      
+      // Wait with timeout
+      long startTime = System.currentTimeMillis();
+      long timeout = 5000; // 5 seconds timeout
+      
+      while (!initDone[0]) {
+        try {
+          Thread.sleep(100);
+        } catch (InterruptedException e) {
+          Log.e(TAG, "Interrupted while waiting for init");
+        }
+        
+        // Check for timeout
+        if (System.currentTimeMillis() - startTime > timeout) {
+          Log.e(TAG, "Timeout waiting for audio engine initialization");
+          // Force thread to stop
+          initThread.interrupt();
+          return false;
+        }
+      }
+      
+      boolean success = initResult[0];
+      if (success) {
+        // Create a default sine wave instrument with ID 0
+        createDefaultInstrument();
+        
+        // Initialize sequence manager
+        if (sequenceManager == null) {
+          sequenceManager = new SequenceManager(audioEngine);
+          sequenceManager.init();
+          
+          // Start sequence timer
+          startSequenceTimer();
+        }
+        
+        audioEngineInitialized = true;
+        Log.i(TAG, "Audio engine and sequence manager initialized successfully");
       } else {
-        Log.e(TAG, "Failed to initialize audio engine");
+        Log.e(TAG, "Failed to initialize or start audio engine");
       }
       
       return success;
@@ -203,6 +245,9 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
         // Set default envelope parameters
         audioEngine.setInstrumentEnvelope(0, 0.01f, 0.05f, 0.7f, 0.3f);
         
+        // Add to loaded instruments
+        loadedInstruments.put(0, new Object());
+        
         Log.i(TAG, "Created default instrument");
       }
     } catch (Exception e) {
@@ -238,6 +283,8 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
       boolean success = audioEngine.createInstrument(instrumentId, name, type, (float)volume);
       
       if (success) {
+        // Add to loaded instruments
+        loadedInstruments.put(instrumentId, new Object());
         return instrumentId;
       } else {
         return -1;
@@ -353,7 +400,19 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
         return -1;
       }
       
-      int tempo = call.argument("tempo");
+      // Fix the tempo parameter handling to properly cast from Double to int
+      Object tempoObj = call.argument("tempo");
+      int tempo;
+      
+      if (tempoObj instanceof Integer) {
+        tempo = (Integer) tempoObj;
+      } else if (tempoObj instanceof Double) {
+        tempo = ((Double) tempoObj).intValue();
+      } else {
+        // Default tempo if the parameter is missing or has an unexpected type
+        tempo = 120;
+        Log.w(TAG, "Tempo parameter has unexpected type or is missing, using default: " + tempo);
+      }
       
       return sequenceManager.createSequence(tempo);
     } catch (Exception e) {
@@ -649,29 +708,49 @@ public class FlutterMultitrackerPlugin implements FlutterPlugin, MethodCallHandl
     }
   }
 
-  // Add the loadSample method
-  private boolean loadSample(MethodCall call, Result result) {
+  private void loadSample(MethodCall call, Result result) {
     try {
-      if (audioEngine == null) {
-        Log.e(TAG, "Audio engine not initialized");
-        return false;
-      }
-      
       int instrumentId = call.argument("instrumentId");
       int noteNumber = call.argument("noteNumber");
       String samplePath = call.argument("samplePath");
-      int sampleRate = call.argument("sampleRate");
+      int sampleRate = call.hasArgument("sampleRate") ? call.argument("sampleRate") : 44100;
       
-      if (samplePath == null) {
-        Log.e(TAG, "Missing required parameter 'samplePath' for loadSample");
-        return false;
+      // Check if Audio Engine is initialized
+      if (!audioEngineInitialized) {
+        Log.e(TAG, "Cannot load sample: Audio Engine not initialized");
+        result.error("AUDIO_ENGINE_NOT_INITIALIZED", "Audio Engine must be initialized first", null);
+        return;
       }
       
-      return audioEngine.loadSample(instrumentId, noteNumber, samplePath, sampleRate);
+      // Check if the instrument exists
+      if (!loadedInstruments.containsKey(instrumentId)) {
+        Log.e(TAG, "Cannot load sample: Instrument " + instrumentId + " not found");
+        result.error("INSTRUMENT_NOT_FOUND", "Instrument " + instrumentId + " not found", null);
+        return;
+      }
+      
+      // Check if the sample file exists
+      File sampleFile = new File(samplePath);
+      if (!sampleFile.exists()) {
+        Log.e(TAG, "Sample file does not exist: " + samplePath);
+        result.error("SAMPLE_FILE_NOT_FOUND", "Sample file not found: " + samplePath, null);
+        return;
+      }
+      
+      // Load the sample 
+      boolean loadResult = audioEngine.loadSample(instrumentId, noteNumber, samplePath, sampleRate);
+      
+      if (!loadResult) {
+        Log.e(TAG, "Failed to load sample for instrument " + instrumentId + ", note " + noteNumber);
+        result.error("LOAD_SAMPLE_FAILED", "Failed to load sample", null);
+        return;
+      }
+      
+      Log.d(TAG, "Successfully loaded sample for instrument " + instrumentId + ", note " + noteNumber);
+      result.success(true);
     } catch (Exception e) {
-      Log.e(TAG, "Exception in loadSample: " + e.getMessage());
-      e.printStackTrace();
-      return false;
+      Log.e(TAG, "Error in loadSample: " + e.getMessage());
+      result.error("LOAD_SAMPLE_ERROR", "Error loading sample: " + e.getMessage(), null);
     }
   }
 

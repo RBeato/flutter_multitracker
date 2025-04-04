@@ -18,145 +18,61 @@ static SequenceManager* g_sequenceManager = nullptr;
 
 // Initialize the audio engine
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_example_flutter_1multitracker_FlutterMultitrackerPlugin_initAudioEngine(
+Java_com_raybsou_flutter_1multitracker_SimpleAudioEngine_setupAudioEngine(
         JNIEnv* env,
         jobject /* this */,
         jint sampleRate) {
-    LOGI("Initializing audio engine with sample rate: %d", sampleRate);
+    
+    LOGI("JNI: Setting up audio engine with sample rate %d", sampleRate);
     
     try {
-        // Clean up any existing instances
-        if (g_sequenceManager) {
-            LOGI("Cleaning up existing sequence manager");
-            delete g_sequenceManager;
-            g_sequenceManager = nullptr;
-        }
-        
-        if (g_instrumentManager) {
-            LOGI("Cleaning up existing instrument manager");
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
-        }
-        
-        if (g_audioEngine) {
-            LOGI("Cleaning up existing audio engine");
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-        }
-        
-        // Create new audio engine instance
-        LOGI("Creating new audio engine instance");
+        // Create audio engine
         g_audioEngine = new AudioEngine();
         if (!g_audioEngine) {
-            LOGE("Failed to allocate memory for audio engine");
+            LOGE("JNI: Failed to create audio engine");
             return JNI_FALSE;
         }
         
         // Initialize audio engine
-        LOGI("Initializing audio engine");
         if (!g_audioEngine->init(sampleRate)) {
-            LOGE("Failed to initialize audio engine");
+            LOGE("JNI: Failed to initialize audio engine");
             delete g_audioEngine;
             g_audioEngine = nullptr;
             return JNI_FALSE;
         }
         
-        // Start audio engine
-        LOGI("Starting audio engine");
-        if (!g_audioEngine->start()) {
-            LOGE("Failed to start audio engine");
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-            return JNI_FALSE;
-        }
-        
-        // Create new instrument manager instance
-        LOGI("Creating instrument manager");
-        g_instrumentManager = new InstrumentManager(g_audioEngine);
+        // Get the instrument manager
+        g_instrumentManager = g_audioEngine->getInstrumentManager();
         if (!g_instrumentManager) {
-            LOGE("Failed to allocate memory for instrument manager");
+            LOGE("JNI: Failed to get instrument manager");
             delete g_audioEngine;
             g_audioEngine = nullptr;
             return JNI_FALSE;
         }
         
-        // Initialize instrument manager
-        LOGI("Initializing instrument manager");
-        if (!g_instrumentManager->init(sampleRate)) {
-            LOGE("Failed to initialize instrument manager");
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-            return JNI_FALSE;
-        }
-        
-        // Create new sequence manager instance
-        LOGI("Creating sequence manager");
-        g_sequenceManager = new SequenceManager(g_instrumentManager);
+        // Get the sequence manager
+        g_sequenceManager = g_audioEngine->getSequenceManager();
         if (!g_sequenceManager) {
-            LOGE("Failed to allocate memory for sequence manager");
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
+            LOGE("JNI: Failed to get sequence manager");
             delete g_audioEngine;
             g_audioEngine = nullptr;
+            g_instrumentManager = nullptr;
             return JNI_FALSE;
         }
         
-        // Initialize sequence manager
-        LOGI("Initializing sequence manager");
-        if (!g_sequenceManager->init()) {
-            LOGE("Failed to initialize sequence manager");
-            delete g_sequenceManager;
-            g_sequenceManager = nullptr;
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-            return JNI_FALSE;
+        // Create a default sine wave instrument (ID 0)
+        int instrumentId = g_instrumentManager->createSineWaveInstrument("Default Sine");
+        if (instrumentId != 0) {
+            LOGW("JNI: Default instrument ID is %d (expected 0)", instrumentId);
         }
         
-        LOGI("Audio engine initialized successfully");
+        LOGI("JNI: Audio engine setup complete");
         return JNI_TRUE;
     } catch (const std::exception& e) {
-        LOGE("Exception in initAudioEngine: %s", e.what());
-        
-        // Clean up in case of exception
-        if (g_sequenceManager) {
-            delete g_sequenceManager;
-            g_sequenceManager = nullptr;
-        }
-        
-        if (g_instrumentManager) {
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
-        }
-        
-        if (g_audioEngine) {
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-        }
-        
+        LOGE("JNI: Exception in setupAudioEngine: %s", e.what());
         return JNI_FALSE;
     } catch (...) {
-        LOGE("Unknown exception in initAudioEngine");
-        
-        // Clean up in case of exception
-        if (g_sequenceManager) {
-            delete g_sequenceManager;
-            g_sequenceManager = nullptr;
-        }
-        
-        if (g_instrumentManager) {
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
-        }
-        
-        if (g_audioEngine) {
-            delete g_audioEngine;
-            g_audioEngine = nullptr;
-        }
-        
+        LOGE("JNI: Unknown exception in setupAudioEngine");
         return JNI_FALSE;
     }
 }
@@ -499,33 +415,91 @@ Java_com_example_flutter_1multitracker_FlutterMultitrackerPlugin_stopPlayback(
     }
 }
 
-// Clean up resources
-extern "C" JNIEXPORT void JNICALL
-Java_com_example_flutter_1multitracker_FlutterMultitrackerPlugin_cleanup(
+// Send a note on message
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_raybsou_flutter_1multitracker_SimpleAudioEngine_nativePlayNote(
         JNIEnv* env,
-        jobject /* this */) {
-    LOGI("Cleaning up resources");
+        jobject /* this */,
+        jint instrumentId,
+        jint noteNumber,
+        jint velocity) {
+    
+    LOGI("JNI: Playing note %d with velocity %d on instrument %d", noteNumber, velocity, instrumentId);
+    
+    if (!g_instrumentManager) {
+        LOGE("JNI: Instrument manager not initialized");
+        return JNI_FALSE;
+    }
     
     try {
+        bool success = g_instrumentManager->sendNoteOn(instrumentId, noteNumber, velocity);
+        return success ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception& e) {
+        LOGE("JNI: Exception in playNote: %s", e.what());
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("JNI: Unknown exception in playNote");
+        return JNI_FALSE;
+    }
+}
+
+// Send a note off message
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_raybsou_flutter_1multitracker_SimpleAudioEngine_nativeStopNote(
+        JNIEnv* env,
+        jobject /* this */,
+        jint instrumentId,
+        jint noteNumber) {
+    
+    LOGI("JNI: Stopping note %d on instrument %d", noteNumber, instrumentId);
+    
+    if (!g_instrumentManager) {
+        LOGE("JNI: Instrument manager not initialized");
+        return JNI_FALSE;
+    }
+    
+    try {
+        bool success = g_instrumentManager->sendNoteOff(instrumentId, noteNumber);
+        return success ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception& e) {
+        LOGE("JNI: Exception in stopNote: %s", e.what());
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("JNI: Unknown exception in stopNote");
+        return JNI_FALSE;
+    }
+}
+
+// Clean up resources
+extern "C" JNIEXPORT void JNICALL
+Java_com_raybsou_flutter_1multitracker_SimpleAudioEngine_nativeCleanup(
+        JNIEnv* env,
+        jobject /* this */) {
+    
+    LOGI("JNI: Cleaning up native resources");
+    
+    try {
+        // Clean up sequence manager
         if (g_sequenceManager) {
             delete g_sequenceManager;
             g_sequenceManager = nullptr;
         }
         
+        // Clean up instrument manager
         if (g_instrumentManager) {
-            delete g_instrumentManager;
-            g_instrumentManager = nullptr;
+            g_instrumentManager = nullptr; // Don't delete, it's owned by the audio engine
         }
         
+        // Clean up audio engine (this will also clean up the instrument manager)
         if (g_audioEngine) {
             delete g_audioEngine;
             g_audioEngine = nullptr;
         }
         
-        LOGI("Resources cleaned up successfully");
+        LOGI("JNI: All native resources cleaned up");
     } catch (const std::exception& e) {
-        LOGE("Exception in cleanup: %s", e.what());
+        LOGE("JNI: Exception in cleanup: %s", e.what());
     } catch (...) {
-        LOGE("Unknown exception in cleanup");
+        LOGE("JNI: Unknown exception in cleanup");
     }
 } 

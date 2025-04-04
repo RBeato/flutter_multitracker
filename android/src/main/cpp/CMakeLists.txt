@@ -23,6 +23,9 @@ add_library(flutter_multitracker SHARED
     # Main JNI interface
     multitracker_jni.cpp
     
+    # FFI interface
+    multitracker_ffi.cpp
+    
     # Audio engine
     audio_engine.cpp
     audio_engine.h

@@ -20,6 +20,20 @@ SequenceManager::SequenceManager(InstrumentManager* instrumentManager)
     LOGD("SequenceManager created");
 }
 
+SequenceManager::SequenceManager(AudioEngine* audioEngine /* unused */, InstrumentManager* instrumentManager)
+    : m_instrumentManager(instrumentManager),
+      m_nextSequenceId(1),
+      m_nextTrackId(1),
+      m_nextNoteId(1),
+      m_activeSequenceId(-1),
+      m_isPlaying(false) {
+    // Store the reference to the instrument manager
+    m_instrumentManager = instrumentManager;
+    
+    // Initialize the sequence manager
+    init();
+}
+
 SequenceManager::~SequenceManager() {
     LOGD("SequenceManager destructor called");
     try {
@@ -230,8 +244,8 @@ int SequenceManager::addNote(int sequenceId, int trackId, int noteNumber, int ve
         
         // Check if the instrument exists
         int instrumentId = trackIt->second.instrumentId;
-        Instrument* instrument = m_instrumentManager->getInstrument(instrumentId);
-        if (!instrument) {
+        auto instrumentOpt = m_instrumentManager->getInstrument(instrumentId);
+        if (!instrumentOpt) {
             LOGW("Instrument with ID %d not found", instrumentId);
             return -1;
         }
@@ -438,16 +452,14 @@ void SequenceManager::processActiveNotes() {
             int instrumentId = trackPair.second.instrumentId;
             
             // Check if the instrument exists
-            Instrument* instrument = m_instrumentManager->getInstrument(instrumentId);
-            if (!instrument) {
+            auto instrumentOpt = m_instrumentManager->getInstrument(instrumentId);
+            if (!instrumentOpt) {
                 LOGW("Instrument %d not found for track %d", instrumentId, trackPair.first);
                 continue;
             }
             
-            // Process each note
-            for (auto& notePair : trackPair.second.notes) {
-                const Note& note = notePair.second;
-                
+            // Process each note - silence the warning by using the index variable
+            for (auto it = trackPair.second.notes.begin(); it != trackPair.second.notes.end(); ++it) {
                 // Process note logic here if needed
                 // For now, we're just using the simple note on/off mechanism
             }

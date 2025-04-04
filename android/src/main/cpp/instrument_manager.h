@@ -1,87 +1,102 @@
-#ifndef FLUTTER_MULTITRACKER_INSTRUMENT_MANAGER_H
-#define FLUTTER_MULTITRACKER_INSTRUMENT_MANAGER_H
+#ifndef INSTRUMENT_MANAGER_H
+#define INSTRUMENT_MANAGER_H
 
 #include <map>
-#include <memory>
-#include <mutex>
 #include <string>
+#include <mutex>
 #include <set>
+#include <optional>
 #include <vector>
 
-// Forward declarations
 class AudioEngine;
 
-// Enum for instrument types
+// Define instrument types
 enum class InstrumentType {
+    UNDEFINED,
     SINE_WAVE,
-    UNKNOWN
+    SFZ,
+    SF2
 };
 
-// Struct for instrument data
+// Instrument structure
 struct Instrument {
-    InstrumentType type = InstrumentType::SINE_WAVE;
+    InstrumentType type = InstrumentType::UNDEFINED;
     std::string name;
+    std::string filePath;  // For SFZ or SF2 files
     float volume = 1.0f;
+    // Additional instrument-specific properties can be added here
 };
 
+// Manager class for handling instruments
 class InstrumentManager {
 public:
-    // Constructor and destructor
-    explicit InstrumentManager(AudioEngine* audioEngine);
+    InstrumentManager();
     ~InstrumentManager();
     
-    // Initialization
-    bool init(int sampleRate);
+    // Set audio engine reference
+    void setAudioEngine(AudioEngine* audioEngine);
     
-    // Instrument loading - simplified to just create a sine wave instrument
+    // Initialize the manager
+    bool init();
+    
+    // Create instruments
     int createSineWaveInstrument(const std::string& name);
+    int loadSfzInstrument(const std::string& filePath, const std::string& name);
+    int loadSf2Instrument(const std::string& filePath, const std::string& name, int presetIndex);
     bool unloadInstrument(int instrumentId);
     
-    // Get an instrument by ID
-    Instrument* getInstrument(int instrumentId);
-    
-    // Note handling
+    // MIDI-style note events
     bool sendNoteOn(int instrumentId, int noteNumber, int velocity);
     bool sendNoteOff(int instrumentId, int noteNumber);
     
-    // Volume control
+    // Stop all notes for an instrument
+    bool stopAllNotes(int instrumentId);
+    
+    // Stop notes for all instruments
+    void stopAllNotes();
+    
+    // Instrument management
     bool setInstrumentVolume(int instrumentId, float volume);
+    std::vector<int> getLoadedInstrumentIds();
     
     // Audio rendering
     void renderAudio(float* buffer, int numFrames, float masterVolume);
     
-    // Instrument management
-    std::vector<int> getLoadedInstrumentIds();
+    // Helper methods for audio rendering
+    std::vector<int> getActiveInstruments() const;
+    std::set<int> getActiveNotes(int instrumentId) const;
+    int getNoteVelocity(int instrumentId, int noteNumber) const;
+    float& getNotePhase(int instrumentId, int noteNumber);
+    std::optional<Instrument> getInstrument(int instrumentId) const;
+    
+    // Utility functions
+    static float midiNoteToFrequency(int note);
     
 private:
     // Audio engine reference
-    AudioEngine* m_audioEngine;
+    AudioEngine* m_audioEngine = nullptr;
     
-    // Instrument storage
+    // Initialization state
+    bool m_isInitialized = false;
+    std::mutex m_mutex;
+    
+    // Audio parameters
+    int m_sampleRate = 44100;
+    
+    // Maps for instrument management
     std::map<int, Instrument> m_instruments;
+    std::map<int, std::set<int>> m_activeNotes;  // instrumentId -> set of active note numbers
+    std::map<int, std::map<int, int>> m_noteVelocities;  // instrumentId -> (noteNumber -> velocity)
+    std::map<int, std::map<int, float>> m_notePhases;  // instrumentId -> (noteNumber -> phase)
     
-    // Active notes tracking
-    std::map<int, std::set<int>> m_activeNotes;
-    
-    // Note velocities tracking (instrumentId -> (noteNumber -> velocity))
-    std::map<int, std::map<int, int>> m_noteVelocities;
-    
-    // Note phases tracking for sine wave generation
-    std::map<int, std::map<int, float>> m_notePhases;
-    
-    // Audio configuration
-    int m_sampleRate;
-    bool m_isInitialized;
-    
-    // Next instrument ID counter
-    int m_nextInstrumentId;
-    
-    // Thread safety
-    mutable std::mutex m_mutex;
-    
-    // Helper methods
+    // Generate a unique ID for a new instrument
     int generateUniqueId();
-    float midiNoteToFrequency(int note);
+    
+    // Constants
+    static constexpr int MAX_INSTRUMENTS = 128;
+    static constexpr int MAX_NOTES = 128;
+    static constexpr int MIN_SAMPLE_RATE = 8000;
+    static constexpr int MAX_SAMPLE_RATE = 192000;
 };
 
-#endif // FLUTTER_MULTITRACKER_INSTRUMENT_MANAGER_H 
+#endif // INSTRUMENT_MANAGER_H 

@@ -3,96 +3,107 @@
 ## Technologies Used
 
 ### Programming Languages
-- **Dart**: Primary language for the Flutter plugin API and model classes
+- **Dart**: For the plugin API and Flutter integration
 - **Kotlin**: For Android platform implementation
 - **Swift**: For iOS platform implementation
-- **C++**: For integrating with the sfizz library
+- **C++**: For cross-platform audio engine implementation and FFI bindings
+- **Objective-C**: For bridging Swift and C++ on iOS
 
-### Frameworks & Libraries
-- **Flutter**: Cross-platform UI framework (≥3.7.0)
-- **sfizz**: Open-source SFZ playback library for sampler instruments
-- **path_provider**: Flutter plugin for accessing device file system paths
-- **plugin_platform_interface**: Flutter plugin for defining platform interfaces
+### Frameworks and Libraries
+- **Flutter**: ≥3.24.0 required for compatibility with latest FFI features
+- **sfizz**: C++ library for SFZ instrument playback
+- **sf2cute**: C++ library for SF2 instrument playback
+- **FFI**: Dart Foreign Function Interface for direct native code access
+- **path_provider**: For accessing file system paths across platforms
+- **plugin_platform_interface**: For defining the plugin's platform interface
 
 ### Audio Technologies
-- **SFZ Format**: Sample-based instrument definition format
-- **SF2 (SoundFont) Format**: Another sample-based instrument format
-- **AudioUnit**: iOS audio plugin technology
-- **AVAudioEngine**: iOS audio processing framework
-- **Android AudioTrack API**: Android audio output API
+- **SFZ Format**: Text-based sample format specification
+- **SF2 Format**: SoundFont format for sample-based instruments
+- **OpenSL ES**: Android low-level audio API
+- **AudioUnit**: iOS audio processing framework
+- **AVAudioEngine**: iOS high-level audio framework
 
 ## Development Setup
 
-### Required Tools
-- Flutter SDK (≥3.7.0)
-- Android Studio / IntelliJ IDEA / VS Code with Flutter plugins
-- Xcode for iOS development
-- Android NDK for C++ compilation on Android
-- CMake for building native libraries
-- Git for version control
+### Flutter Requirements
+- Flutter SDK ≥3.24.0
+- Dart SDK ≥3.3.0
 
-### Environment Configuration
-- Flutter and Dart SDK installation
-- Android SDK setup with NDK components
-- iOS development environment with Xcode tools
-- sfizz library integration with native builds
+### Android Requirements
+- Android SDK ≥23 (Android 6.0)
+- NDK r21e or higher
+- CMake 3.18.1 or higher
+- Gradle 7.5 or higher
 
-### Build Process
-- Standard Flutter plugin build process
-- Native library compilation for both platforms
-- FFI bindings generation for sfizz integration
+### iOS Requirements
+- iOS 11.0 or higher
+- Xcode 14.0 or higher
+- CocoaPods 1.11.0 or higher
+
+### C++ Requirements
+- C++17 support
+- CMake 3.18.1 or higher
 
 ## Technical Constraints
 
-### Platform Limitations
-- **Android**: Minimum SDK version 23 (Android 6.0)
-- **iOS**: Minimum iOS version 11.0
-- **Audio Latency**: Varies by device and platform
-- **Memory Usage**: Sampled instruments can use significant memory
+### Performance Constraints
+- **Low Latency**: Audio processing must have minimal latency (<10ms)
+- **CPU Usage**: Must be efficient to avoid battery drain
+- **Memory Usage**: Sample management must be memory-efficient
+- **Thread Safety**: Audio processing must be isolated from UI thread
 
-### Performance Considerations
-- Real-time audio processing requires low-latency operations
-- Large SFZ instruments can consume substantial memory
-- Concurrent audio processing and UI updates must be managed carefully
-- Battery impact of continuous audio processing
+### Platform Constraints
+- **iOS Audio**: Must adhere to iOS audio session guidelines
+- **Android Audio**: Must account for device fragmentation in audio capabilities
+- **Plugin Lifecycle**: Must handle app lifecycle events properly
 
-### Security Constraints
-- App permissions for audio recording (microphone) may be required
-- File system access limited to app-specific directories
-- Resource cleanup to prevent memory leaks
+### FFI Constraints
+- **Memory Management**: Careful management of memory shared between Dart and native code
+- **API Design**: FFI APIs must be carefully designed for performance and safety
+- **Thread Handling**: Must ensure proper thread synchronization with FFI calls
 
 ## Dependencies
 
-### External Dependencies
-- **sfizz library**: For SFZ playback
-  - Version: latest stable
-  - License: BSD-2-Clause
-  - Integration: Static compilation
+### Core Dependencies
+- **sfizz**: C++ library for SFZ instrument playback
+- **sf2cute**: C++ library for SF2 instrument playback
+- **plugin_platform_interface**: For defining the plugin platform interface
+- **ffi**: For Dart FFI support
+- **path_provider**: For accessing platform-specific directories
 
-### Flutter Package Dependencies
-- **flutter**: Flutter framework
-  - Version: ">=3.7.0"
-- **path_provider**: For file path access
-  - Version: ^2.1.1
-- **path**: For path manipulation utilities
-  - Version: ^1.8.3
-- **plugin_platform_interface**: For platform interface definition
-  - Version: ^2.1.8
+### Dev Dependencies
+- **ffigen**: For generating Dart FFI bindings from C headers
+- **build_runner**: For running code generation tasks
+- **mockito**: For mocking in tests
+- **test**: For unit testing
 
-### Development Dependencies
-- **flutter_test**: For testing
-  - Version: SDK package
-- **flutter_lints**: For code quality
-  - Version: ^5.0.0
+## Deployment
 
-## Deployment Considerations
+### Distribution Channels
+- **pub.dev**: For distributing the Flutter plugin
+- **Github**: For source code and releases
 
-### Package Distribution
-- Published on pub.dev
-- Versioning follows semantic versioning (SemVer)
-- Example application included for demonstration
+### Package Structure
+- **Federated Plugin**: Following Flutter federated plugin structure
+- **Native Libraries**: Properly packaged for each platform
 
-### Installation Requirements
-- Users need to add platform-specific permissions
-- iOS: Microphone usage description in Info.plist
-- Android: RECORD_AUDIO permission in AndroidManifest.xml 
+### Versioning
+- **Semantic Versioning**: Following semver for package releases
+
+## Optimization Techniques
+
+### Memory Optimization
+- **Sample Streaming**: Loading samples on-demand rather than all at once
+- **Reference Counting**: For proper resource management
+- **Caching**: Smart caching of frequently used samples
+
+### Performance Optimization
+- **Lock-free Algorithms**: For audio thread communication
+- **SIMD Instructions**: For audio processing where applicable
+- **Pre-computation**: Where possible to reduce real-time computation
+
+### Threading Optimization
+- **Real-time Audio Thread**: For uninterrupted audio processing
+- **Worker Threads**: For loading and processing samples
+- **Main Thread**: For UI updates and non-critical operations 

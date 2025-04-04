@@ -16,7 +16,7 @@ A multi-track sequencer and sampler plugin for Flutter supporting SFZ, SF2, and 
   s.source_files = 'Classes/**/*'
   s.public_header_files = 'Classes/**/*.h'
   s.dependency 'Flutter'
-  s.platform = :ios, '10.0'
+  s.platform = :ios, '12.0'
   
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 
@@ -44,6 +44,9 @@ A multi-track sequencer and sampler plugin for Flutter supporting SFZ, SF2, and 
   
   # Swift versions
   s.swift_version = '5.0'
+
+  # Enable FFI plugin support
+  s.static_framework = true
 
   # If your plugin requires a privacy manifest, for example if it uses any
   # required reason APIs, update the PrivacyInfo.xcprivacy file to describe your

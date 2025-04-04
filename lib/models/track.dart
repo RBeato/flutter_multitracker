@@ -3,10 +3,13 @@ import 'note.dart';
 
 /// Represents a track in a sequence
 class Track {
-  /// The unique ID of the track
+  /// Unique identifier for the track
   final int id;
   
-  /// The ID of the instrument assigned to this track
+  /// The ID of the sequence this track belongs to
+  final int sequenceId;
+  
+  /// The ID of the instrument used for this track
   final int instrumentId;
   
   /// The name of the track (optional)
@@ -27,9 +30,10 @@ class Track {
   /// Whether the track is soloed
   bool soloed;
 
-  /// Creates a new Track instance
+  /// Creates a new track
   Track({
     required this.id,
+    required this.sequenceId,
     required this.instrumentId,
     this.name,
     List<Note>? notes,
@@ -46,10 +50,17 @@ class Track {
     notes.add(note);
   }
 
-  /// Remove a note from the track
-  bool removeNote(int noteId) {
+  /// Remove a note from the track by its properties
+  /// This removes notes that match the given parameters
+  bool removeNote({int? noteNumber, double? startBeat, double? durationBeats}) {
     final initialLength = notes.length;
-    notes.removeWhere((note) => note.id == noteId);
+    
+    notes.removeWhere((note) => 
+      (noteNumber == null || note.noteNumber == noteNumber) &&
+      (startBeat == null || note.startBeat == startBeat) &&
+      (durationBeats == null || note.durationBeats == durationBeats)
+    );
+    
     return notes.length != initialLength;
   }
 
@@ -106,6 +117,6 @@ class Track {
 
   @override
   String toString() {
-    return 'Track(id: $id, instrumentId: $instrumentId, name: ${name ?? "unnamed"}, notes: ${notes.length}, volumeAutomation: ${volumeAutomation.length})';
+    return 'Track{id: $id, sequenceId: $sequenceId, instrumentId: $instrumentId, volume: $volume, notes: ${notes.length}}';
   }
 } 
